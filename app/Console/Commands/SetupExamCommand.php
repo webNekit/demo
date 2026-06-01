@@ -14,19 +14,18 @@ class SetupExamCommand extends Command
 
     public function handle(): int
     {
-        $variant = $this->ask('Выберите вариант экзамена для генерации [1, 2, 3]:');
+        $variant = $this->ask('Выберите вариант экзамена [2, 3, 4]:');
 
-        if (!in_array($variant, ['1', '2', '3'])) {
-            $this->error('Неверный вариант. Выберите 1, 2 или 3.');
+        if (!in_array($variant, ['2', '3', '4'])) {
+            $this->error('Неверный вариант. Выберите 2, 3 или 4.');
             return 1;
         }
 
         $this->info("Генерация варианта №{$variant}...");
 
         $this->createDirectories();
-
+        $this->cleanupVariantFiles();
         $this->generateCommonFiles($variant);
-
         $this->{"generateVariant{$variant}"}();
 
         if ($this->confirm('Запустить миграции? (migrate:fresh --seed)', true)) {
@@ -41,6 +40,11 @@ class SetupExamCommand extends Command
 
     private function createDirectories(): void
     {
+        $filamentPath = app_path('Filament');
+        if (File::isDirectory($filamentPath) && !is_writable($filamentPath)) {
+            File::deleteDirectory($filamentPath);
+        }
+
         $dirs = [
             app_path('Filament/Pages/Auth'),
             app_path('Filament/Resources'),
@@ -54,204 +58,214 @@ class SetupExamCommand extends Command
         }
     }
 
+    private function cleanupVariantFiles(): void
+    {
+        $variantMigrations = glob(database_path('migrations/2025_*'));
+        foreach ($variantMigrations as $file) {
+            File::delete($file);
+            $this->line("  <info>cleaned:</info> " . str_replace(base_path(), '', $file));
+        }
+
+        $resources = [
+            'TestDriveRequestResource',
+            'BookCardResource',
+            'BookingResource',
+            'ConferenceBookingResource',
+            'TrainingApplicationResource',
+            'BanquetBookingResource',
+        ];
+
+        foreach ($resources as $resource) {
+            $path = app_path("Filament/Resources/{$resource}.php");
+            if (File::exists($path)) {
+                File::delete($path);
+                $this->line("  <info>cleaned:</info> " . str_replace(base_path(), '', $path));
+            }
+
+            $dir = app_path("Filament/Resources/{$resource}");
+            if (File::isDirectory($dir)) {
+                File::deleteDirectory($dir);
+                $this->line("  <info>cleaned:</info> " . str_replace(base_path(), '', $dir) . '/');
+            }
+        }
+
+        $models = ['TestDriveRequest', 'BookCard', 'Booking', 'ConferenceBooking', 'TrainingApplication', 'BanquetBooking'];
+        foreach ($models as $model) {
+            $path = app_path("Models/{$model}.php");
+            if (File::exists($path)) {
+                File::delete($path);
+                $this->line("  <info>cleaned:</info> " . str_replace(base_path(), '', $path));
+            }
+        }
+    }
+
     private function generateCommonFiles(string $variant): void
     {
-        // CustomLogin
-        $this->putFile(app_path('Filament/Pages/Auth/CustomLogin.php'), $this->getCustomLoginContent());
+        $this->putFile(app_path('Filament/Pages/Auth/CustomLogin.php'), $this->getCustomLoginContent($variant));
 
-        // CustomRegister
-        $this->putFile(app_path('Filament/Pages/Auth/CustomRegister.php'), $this->getCustomRegisterContent($variant));
+        $registerContent = $variant === '3'
+            ? $this->getCustomRegisterV3Content($variant)
+            : $this->getCustomRegisterV2Content($variant);
 
-        // AdminPanelProvider
-        $this->putFile(app_path('Providers/Filament/AdminPanelProvider.php'), $this->getAdminPanelProviderContent());
-
-        // Routes
+        $this->putFile(app_path('Filament/Pages/Auth/CustomRegister.php'), $registerContent);
+        $this->putFile(app_path('Providers/Filament/AdminPanelProvider.php'), $this->getAdminPanelProviderContent($variant));
         $this->putFile(base_path('routes/web.php'), $this->getRoutesWebContent());
     }
 
-    private function generateVariant1(): void
-    {
-        // User migration
-        $this->putFile(
-            database_path('migrations/0001_01_01_000000_create_users_table.php'),
-            $this->getUserMigrationV1()
-        );
-
-        // User model
-        $this->putFile(app_path('Models/User.php'), $this->getUserModelV1());
-
-        // TestDriveRequest migration
-        $this->putFile(
-            database_path('migrations/2025_01_01_000001_create_test_drive_requests_table.php'),
-            $this->getTestDriveRequestMigration()
-        );
-
-        // TestDriveRequest model
-        $this->putFile(app_path('Models/TestDriveRequest.php'), $this->getTestDriveRequestModel());
-
-        // TestDriveRequestResource
-        $this->putFile(
-            app_path('Filament/Resources/TestDriveRequestResource.php'),
-            $this->getTestDriveRequestResource()
-        );
-
-        // Resource pages directory
-        $resourcePagesDir = app_path('Filament/Resources/TestDriveRequestResource/Pages');
-        if (!File::isDirectory($resourcePagesDir)) {
-            File::makeDirectory($resourcePagesDir, 0755, true);
-        }
-
-        // List page
-        $this->putFile(
-            app_path('Filament/Resources/TestDriveRequestResource/Pages/ListTestDriveRequests.php'),
-            $this->getListTestDriveRequestsPage()
-        );
-
-        // Create page
-        $this->putFile(
-            app_path('Filament/Resources/TestDriveRequestResource/Pages/CreateTestDriveRequest.php'),
-            $this->getCreateTestDriveRequestPage()
-        );
-
-        // Edit page
-        $this->putFile(
-            app_path('Filament/Resources/TestDriveRequestResource/Pages/EditTestDriveRequest.php'),
-            $this->getEditTestDriveRequestPage()
-        );
-
-        // Admin seeder
-        $this->putFile(
-            database_path('seeders/AdminSeeder.php'),
-            $this->getAdminSeederV1()
-        );
-
-        // DatabaseSeeder
-        $this->putFile(
-            database_path('seeders/DatabaseSeeder.php'),
-            $this->getDatabaseSeederWithAdmin()
-        );
-    }
+    // ─── Variant 2: Конференции.РФ ─────────────────────────────────────
 
     private function generateVariant2(): void
     {
-        // User migration
         $this->putFile(
             database_path('migrations/0001_01_01_000000_create_users_table.php'),
             $this->getUserMigrationV2()
         );
 
-        // User model
         $this->putFile(app_path('Models/User.php'), $this->getUserModelV2());
 
-        // BookCard migration
         $this->putFile(
-            database_path('migrations/2025_01_01_000001_create_book_cards_table.php'),
-            $this->getBookCardMigration()
+            database_path('migrations/2025_01_01_000001_create_conference_bookings_table.php'),
+            $this->getConferenceBookingMigration()
         );
 
-        // BookCard model
-        $this->putFile(app_path('Models/BookCard.php'), $this->getBookCardModel());
+        $this->putFile(app_path('Models/ConferenceBooking.php'), $this->getConferenceBookingModel());
 
-        // BookCardResource
         $this->putFile(
-            app_path('Filament/Resources/BookCardResource.php'),
-            $this->getBookCardResource()
+            app_path('Filament/Resources/ConferenceBookingResource.php'),
+            $this->getConferenceBookingResource()
         );
 
-        // Resource pages directory
-        $resourcePagesDir = app_path('Filament/Resources/BookCardResource/Pages');
+        $resourcePagesDir = app_path('Filament/Resources/ConferenceBookingResource/Pages');
         if (!File::isDirectory($resourcePagesDir)) {
             File::makeDirectory($resourcePagesDir, 0755, true);
         }
 
-        // List page
         $this->putFile(
-            app_path('Filament/Resources/BookCardResource/Pages/ListBookCards.php'),
-            $this->getListBookCardsPage()
+            app_path('Filament/Resources/ConferenceBookingResource/Pages/ListConferenceBookings.php'),
+            $this->getListConferenceBookingsPage()
         );
 
-        // Create page
         $this->putFile(
-            app_path('Filament/Resources/BookCardResource/Pages/CreateBookCard.php'),
-            $this->getCreateBookCardPage()
+            app_path('Filament/Resources/ConferenceBookingResource/Pages/CreateConferenceBooking.php'),
+            $this->getCreateConferenceBookingPage()
         );
 
-        // Edit page
         $this->putFile(
-            app_path('Filament/Resources/BookCardResource/Pages/EditBookCard.php'),
-            $this->getEditBookCardPage()
+            app_path('Filament/Resources/ConferenceBookingResource/Pages/EditConferenceBooking.php'),
+            $this->getEditConferenceBookingPage()
         );
 
-        // Admin seeder
         $this->putFile(
             database_path('seeders/AdminSeeder.php'),
-            $this->getAdminSeederV2()
+            $this->getAdminSeeder('2', 'admin@conference.ru')
         );
 
-        // DatabaseSeeder
         $this->putFile(
             database_path('seeders/DatabaseSeeder.php'),
             $this->getDatabaseSeederWithAdmin()
         );
     }
 
+    // ─── Variant 3: Пассажирам.РФ ──────────────────────────────────────
+
     private function generateVariant3(): void
     {
-        // User migration
         $this->putFile(
             database_path('migrations/0001_01_01_000000_create_users_table.php'),
             $this->getUserMigrationV3()
         );
 
-        // User model
         $this->putFile(app_path('Models/User.php'), $this->getUserModelV3());
 
-        // Booking migration
         $this->putFile(
-            database_path('migrations/2025_01_01_000001_create_bookings_table.php'),
-            $this->getBookingMigration()
+            database_path('migrations/2025_01_01_000001_create_training_applications_table.php'),
+            $this->getTrainingApplicationMigration()
         );
 
-        // Booking model
-        $this->putFile(app_path('Models/Booking.php'), $this->getBookingModel());
+        $this->putFile(app_path('Models/TrainingApplication.php'), $this->getTrainingApplicationModel());
 
-        // BookingResource
         $this->putFile(
-            app_path('Filament/Resources/BookingResource.php'),
-            $this->getBookingResource()
+            app_path('Filament/Resources/TrainingApplicationResource.php'),
+            $this->getTrainingApplicationResource()
         );
 
-        // Resource pages directory
-        $resourcePagesDir = app_path('Filament/Resources/BookingResource/Pages');
+        $resourcePagesDir = app_path('Filament/Resources/TrainingApplicationResource/Pages');
         if (!File::isDirectory($resourcePagesDir)) {
             File::makeDirectory($resourcePagesDir, 0755, true);
         }
 
-        // List page
         $this->putFile(
-            app_path('Filament/Resources/BookingResource/Pages/ListBookings.php'),
-            $this->getListBookingsPage()
+            app_path('Filament/Resources/TrainingApplicationResource/Pages/ListTrainingApplications.php'),
+            $this->getListTrainingApplicationsPage()
         );
 
-        // Create page
         $this->putFile(
-            app_path('Filament/Resources/BookingResource/Pages/CreateBooking.php'),
-            $this->getCreateBookingPage()
+            app_path('Filament/Resources/TrainingApplicationResource/Pages/CreateTrainingApplication.php'),
+            $this->getCreateTrainingApplicationPage()
         );
 
-        // Edit page
         $this->putFile(
-            app_path('Filament/Resources/BookingResource/Pages/EditBooking.php'),
-            $this->getEditBookingPage()
+            app_path('Filament/Resources/TrainingApplicationResource/Pages/EditTrainingApplication.php'),
+            $this->getEditTrainingApplicationPage()
         );
 
-        // Admin seeder
         $this->putFile(
             database_path('seeders/AdminSeeder.php'),
-            $this->getAdminSeederV3()
+            $this->getAdminSeeder('3', 'admin@passenger.ru')
         );
 
-        // DatabaseSeeder
+        $this->putFile(
+            database_path('seeders/DatabaseSeeder.php'),
+            $this->getDatabaseSeederWithAdmin()
+        );
+    }
+
+    private function generateVariant4(): void
+    {
+        $this->putFile(
+            database_path('migrations/0001_01_01_000000_create_users_table.php'),
+            $this->getUserMigrationV2()
+        );
+
+        $this->putFile(app_path('Models/User.php'), $this->getUserModelV2());
+
+        $this->putFile(
+            database_path('migrations/2025_01_01_000001_create_banquet_bookings_table.php'),
+            $this->getBanquetBookingMigration()
+        );
+
+        $this->putFile(app_path('Models/BanquetBooking.php'), $this->getBanquetBookingModel());
+
+        $this->putFile(
+            app_path('Filament/Resources/BanquetBookingResource.php'),
+            $this->getBanquetBookingResource()
+        );
+
+        $resourcePagesDir = app_path('Filament/Resources/BanquetBookingResource/Pages');
+        if (!File::isDirectory($resourcePagesDir)) {
+            File::makeDirectory($resourcePagesDir, 0755, true);
+        }
+
+        $this->putFile(
+            app_path('Filament/Resources/BanquetBookingResource/Pages/ListBanquetBookings.php'),
+            $this->getListBanquetBookingsPage()
+        );
+
+        $this->putFile(
+            app_path('Filament/Resources/BanquetBookingResource/Pages/CreateBanquetBooking.php'),
+            $this->getCreateBanquetBookingPage()
+        );
+
+        $this->putFile(
+            app_path('Filament/Resources/BanquetBookingResource/Pages/EditBanquetBooking.php'),
+            $this->getEditBanquetBookingPage()
+        );
+
+        $this->putFile(
+            database_path('seeders/AdminSeeder.php'),
+            $this->getAdminSeeder('4', 'admin@banquet.ru')
+        );
+
         $this->putFile(
             database_path('seeders/DatabaseSeeder.php'),
             $this->getDatabaseSeederWithAdmin()
@@ -260,13 +274,30 @@ class SetupExamCommand extends Command
 
     private function putFile(string $path, string $content): void
     {
+        $dir = dirname($path);
+        if (!File::isDirectory($dir)) {
+            File::makeDirectory($dir, 0755, true);
+        }
+
+        if (File::exists($path) && !is_writable($path)) {
+            chmod($path, 0664);
+        }
+
         File::put($path, $content);
         $this->line("  <info>created:</info> " . str_replace(base_path(), '', $path));
     }
 
-    private function getCustomLoginContent(): string
+    // ─── Auth: Login ───────────────────────────────────────────────────
+
+    private function getCustomLoginContent(string $variant): string
     {
-        return <<<'PHP'
+        [$heading, $subheading] = match ($variant) {
+            '2' => ['Конференции.РФ', 'Бронирование помещений для мероприятий'],
+            '3' => ['Пассажирам.РФ', 'Запись на обучение вождению'],
+            '4' => ['Банкетам.Нет', 'Бронирование банкетных залов'],
+        };
+
+        return <<<PHP
 <?php
 
 namespace App\Filament\Pages\Auth;
@@ -274,10 +305,28 @@ namespace App\Filament\Pages\Auth;
 use Filament\Auth\Pages\Login as BaseLogin;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Components\Component;
+use Illuminate\Contracts\Support\Htmlable;
+use Illuminate\Support\HtmlString;
 use Illuminate\Validation\ValidationException;
 
 class CustomLogin extends BaseLogin
 {
+    public function getHeading(): string | Htmlable | null
+    {
+        return '{$heading}';
+    }
+
+    public function getSubheading(): string | Htmlable | null
+    {
+        \$parent = parent::getSubheading();
+
+        if (\$parent) {
+            return new HtmlString('{$subheading}' . ' · ' . \$parent);
+        }
+
+        return '{$subheading}';
+    }
+
     protected function getEmailFormComponent(): Component
     {
         return TextInput::make('login')
@@ -290,11 +339,11 @@ class CustomLogin extends BaseLogin
             ]);
     }
 
-    protected function getCredentialsFromFormData(array $data): array
+    protected function getCredentialsFromFormData(array \$data): array
     {
         return [
-            'login' => $data['login'],
-            'password' => $data['password'],
+            'login' => \$data['login'],
+            'password' => \$data['password'],
         ];
     }
 
@@ -308,18 +357,16 @@ class CustomLogin extends BaseLogin
 PHP;
     }
 
-    private function getCustomRegisterContent(string $variant): string
-    {
-        if ($variant === '3') {
-            return $this->getCustomRegisterV3Content();
-        }
+    // ─── Auth: Register (Variant 2) ────────────────────────────────────
 
-        return $this->getCustomRegisterV12Content();
-    }
-
-    private function getCustomRegisterV12Content(): string
+    private function getCustomRegisterV2Content(string $variant): string
     {
-        return <<<'PHP'
+        $heading = match ($variant) {
+            '2' => 'Регистрация — Конференции.РФ',
+            '4' => 'Регистрация — Банкетам.Нет',
+        };
+
+        return <<<PHP
 <?php
 
 namespace App\Filament\Pages\Auth;
@@ -328,29 +375,35 @@ use App\Models\User;
 use Filament\Auth\Pages\Register as BaseRegister;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Schema;
+use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Support\Facades\Hash;
 
 class CustomRegister extends BaseRegister
 {
-    public function form(Schema $schema): Schema
+    public function getHeading(): string | Htmlable | null
     {
-        return $schema
+        return '{$heading}';
+    }
+
+    public function form(Schema \$schema): Schema
+    {
+        return \$schema
             ->components([
                 TextInput::make('login')
                     ->label('Логин')
                     ->required()
                     ->unique(table: User::class)
-                    ->rules(['regex:/^[\p{Cyrillic}]+$/u', 'min:6'])
+                    ->rules(['regex:/^[a-zA-Z0-9]+\$/', 'min:6'])
                     ->validationMessages([
                         'required' => 'Поле логина обязательно для заполнения.',
                         'unique' => 'Такой логин уже существует.',
-                        'regex' => 'Логин должен содержать только кириллицу.',
+                        'regex' => 'Логин должен содержать только латинские буквы и цифры.',
                         'min' => 'Логин должен содержать не менее 6 символов.',
                     ]),
                 TextInput::make('fio')
                     ->label('ФИО')
                     ->required()
-                    ->rules(['regex:/^[\p{Cyrillic}\s]+$/u'])
+                    ->rules(['regex:/^[\\p{Cyrillic}\\s]+\$/u'])
                     ->validationMessages([
                         'required' => 'Поле ФИО обязательно для заполнения.',
                         'regex' => 'ФИО должно содержать только кириллицу и пробелы.',
@@ -359,7 +412,7 @@ class CustomRegister extends BaseRegister
                     ->label('Телефон')
                     ->mask('+7(999)-999-99-99')
                     ->required()
-                    ->rules(['regex:/^\+7\(\d{3}\)-\d{3}-\d{2}-\d{2}$/'])
+                    ->rules(['regex:/^\\+7\\(\\d{3}\\)-\\d{3}-\\d{2}-\\d{2}\$/'])
                     ->validationMessages([
                         'required' => 'Поле телефона обязательно для заполнения.',
                         'regex' => 'Телефон должен быть в формате +7(XXX)-XXX-XX-XX.',
@@ -379,12 +432,12 @@ class CustomRegister extends BaseRegister
                     ->label('Пароль')
                     ->password()
                     ->required()
-                    ->minLength(6)
+                    ->minLength(8)
                     ->same('passwordConfirmation')
-                    ->dehydrateStateUsing(fn ($state) => Hash::make($state))
+                    ->dehydrateStateUsing(fn (\$state) => Hash::make(\$state))
                     ->validationMessages([
                         'required' => 'Поле пароля обязательно для заполнения.',
-                        'min' => 'Пароль должен содержать не менее 6 символов.',
+                        'min' => 'Пароль должен содержать не менее 8 символов.',
                         'same' => 'Пароли не совпадают.',
                     ]),
                 TextInput::make('passwordConfirmation')
@@ -398,7 +451,7 @@ class CustomRegister extends BaseRegister
             ]);
     }
 
-    public function getRegisterFormAction(): \Filament\Actions\Action
+    public function getRegisterFormAction(): \\Filament\\Actions\\Action
     {
         return parent::getRegisterFormAction()
             ->label('Зарегистрироваться');
@@ -407,57 +460,64 @@ class CustomRegister extends BaseRegister
 PHP;
     }
 
-    private function getCustomRegisterV3Content(): string
+    // ─── Auth: Register (Variant 3) ────────────────────────────────────
+
+    private function getCustomRegisterV3Content(string $variant): string
     {
-        return <<<'PHP'
+        return <<<PHP
 <?php
 
 namespace App\Filament\Pages\Auth;
 
 use App\Models\User;
 use Filament\Auth\Pages\Register as BaseRegister;
+use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Schema;
+use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Support\Facades\Hash;
 
 class CustomRegister extends BaseRegister
 {
-    public function form(Schema $schema): Schema
+    public function getHeading(): string | Htmlable | null
     {
-        return $schema
+        return 'Регистрация — Пассажирам.РФ';
+    }
+
+    public function form(Schema \$schema): Schema
+    {
+        return \$schema
             ->components([
                 TextInput::make('login')
                     ->label('Логин')
                     ->required()
                     ->unique(table: User::class)
-                    ->rules(['regex:/^[\p{Cyrillic}]+$/u', 'min:6'])
+                    ->rules(['regex:/^[a-zA-Z0-9]+\$/', 'min:6'])
                     ->validationMessages([
                         'required' => 'Поле логина обязательно для заполнения.',
                         'unique' => 'Такой логин уже существует.',
-                        'regex' => 'Логин должен содержать только кириллицу.',
+                        'regex' => 'Логин должен содержать только латинские буквы и цифры.',
                         'min' => 'Логин должен содержать не менее 6 символов.',
                     ]),
-                TextInput::make('first_name')
-                    ->label('Имя')
+                TextInput::make('fio')
+                    ->label('ФИО')
                     ->required()
-                    ->rules(['regex:/^[\p{Cyrillic}\s]+$/u'])
+                    ->rules(['regex:/^[\\p{Cyrillic}\\s]+\$/u'])
                     ->validationMessages([
-                        'required' => 'Поле имени обязательно для заполнения.',
-                        'regex' => 'Имя должно содержать только кириллицу.',
+                        'required' => 'Поле ФИО обязательно для заполнения.',
+                        'regex' => 'ФИО должно содержать только кириллицу и пробелы.',
                     ]),
-                TextInput::make('last_name')
-                    ->label('Фамилия')
+                DatePicker::make('birth_date')
+                    ->label('Дата рождения')
                     ->required()
-                    ->rules(['regex:/^[\p{Cyrillic}\s]+$/u'])
                     ->validationMessages([
-                        'required' => 'Поле фамилии обязательно для заполнения.',
-                        'regex' => 'Фамилия должна содержать только кириллицу.',
+                        'required' => 'Поле даты рождения обязательно для заполнения.',
                     ]),
                 TextInput::make('phone')
                     ->label('Телефон')
                     ->mask('+7(999)-999-99-99')
                     ->required()
-                    ->rules(['regex:/^\+7\(\d{3}\)-\d{3}-\d{2}-\d{2}$/'])
+                    ->rules(['regex:/^\\+7\\(\\d{3}\\)-\\d{3}-\\d{2}-\\d{2}\$/'])
                     ->validationMessages([
                         'required' => 'Поле телефона обязательно для заполнения.',
                         'regex' => 'Телефон должен быть в формате +7(XXX)-XXX-XX-XX.',
@@ -477,12 +537,12 @@ class CustomRegister extends BaseRegister
                     ->label('Пароль')
                     ->password()
                     ->required()
-                    ->minLength(6)
+                    ->minLength(8)
                     ->same('passwordConfirmation')
-                    ->dehydrateStateUsing(fn ($state) => Hash::make($state))
+                    ->dehydrateStateUsing(fn (\$state) => Hash::make(\$state))
                     ->validationMessages([
                         'required' => 'Поле пароля обязательно для заполнения.',
-                        'min' => 'Пароль должен содержать не менее 6 символов.',
+                        'min' => 'Пароль должен содержать не менее 8 символов.',
                         'same' => 'Пароли не совпадают.',
                     ]),
                 TextInput::make('passwordConfirmation')
@@ -496,7 +556,7 @@ class CustomRegister extends BaseRegister
             ]);
     }
 
-    public function getRegisterFormAction(): \Filament\Actions\Action
+    public function getRegisterFormAction(): \\Filament\\Actions\\Action
     {
         return parent::getRegisterFormAction()
             ->label('Зарегистрироваться');
@@ -505,9 +565,29 @@ class CustomRegister extends BaseRegister
 PHP;
     }
 
-    private function getAdminPanelProviderContent(): string
+    // ─── Admin Panel Provider ─────────────────────────────────────────
+
+    private function getAdminPanelProviderContent(string $variant): string
     {
-        return <<<'PHP'
+        $colors = match ($variant) {
+            '2' => <<<'PHP'
+                'primary' => Color::Indigo,
+                'gray' => Color::Slate,
+PHP,
+            '3' => <<<'PHP'
+                'primary' => Color::Emerald,
+                'gray' => Color::Zinc,
+PHP,
+            '4' => <<<'PHP'
+                'primary' => Color::Rose,
+                'gray' => Color::Stone,
+PHP,
+            default => <<<'PHP'
+                'primary' => Color::Indigo,
+PHP,
+        };
+
+        return <<<PHP
 <?php
 
 namespace App\Providers\Filament;
@@ -533,16 +613,16 @@ use Illuminate\View\Middleware\ShareErrorsFromSession;
 
 class AdminPanelProvider extends PanelProvider
 {
-    public function panel(Panel $panel): Panel
+    public function panel(Panel \$panel): Panel
     {
-        return $panel
+        return \$panel
             ->default()
             ->id('admin')
             ->path('admin')
             ->login(CustomLogin::class)
             ->registration(CustomRegister::class)
             ->colors([
-                'primary' => Color::Amber,
+                {$colors}
             ])
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\Filament\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\Filament\Pages')
@@ -573,6 +653,8 @@ class AdminPanelProvider extends PanelProvider
 PHP;
     }
 
+    // ─── Routes ────────────────────────────────────────────────────────
+
     private function getRoutesWebContent(): string
     {
         return <<<'PHP'
@@ -590,84 +672,7 @@ Route::get('/', function () {
 PHP;
     }
 
-    private function getUserMigrationV1(): string
-    {
-        return <<<'PHP'
-<?php
-
-use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
-
-return new class extends Migration
-{
-    public function up(): void
-    {
-        Schema::create('users', function (Blueprint $table) {
-            $table->id();
-            $table->string('login')->unique();
-            $table->string('password');
-            $table->string('fio');
-            $table->string('phone');
-            $table->string('email')->unique();
-            $table->boolean('is_admin')->default(false);
-            $table->timestamps();
-        });
-
-        Schema::create('sessions', function (Blueprint $table) {
-            $table->string('id')->primary();
-            $table->foreignId('user_id')->nullable()->index();
-            $table->string('ip_address', 45)->nullable();
-            $table->text('user_agent')->nullable();
-            $table->longText('payload');
-            $table->integer('last_activity')->index();
-        });
-    }
-
-    public function down(): void
-    {
-        Schema::dropIfExists('sessions');
-        Schema::dropIfExists('users');
-    }
-};
-PHP;
-    }
-
-    private function getUserModelV1(): string
-    {
-        return <<<'PHP'
-<?php
-
-namespace App\Models;
-
-use Database\Factories\UserFactory;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Foundation\Auth\User as Authenticatable;
-use Illuminate\Notifications\Notifiable;
-
-class User extends Authenticatable
-{
-    use HasFactory, Notifiable;
-
-    protected $fillable = ['login', 'password', 'fio', 'phone', 'email', 'is_admin'];
-
-    protected $hidden = ['password', 'remember_token'];
-
-    protected function casts(): array
-    {
-        return [
-            'password' => 'hashed',
-            'is_admin' => 'boolean',
-        ];
-    }
-
-    public function getNameAttribute(): string
-    {
-        return $this->fio;
-    }
-}
-PHP;
-    }
+    // ─── User (Variant 2) ──────────────────────────────────────────────
 
     private function getUserMigrationV2(): string
     {
@@ -748,6 +753,8 @@ class User extends Authenticatable
 PHP;
     }
 
+    // ─── User (Variant 3) ──────────────────────────────────────────────
+
     private function getUserMigrationV3(): string
     {
         return <<<'PHP'
@@ -765,8 +772,8 @@ return new class extends Migration
             $table->id();
             $table->string('login')->unique();
             $table->string('password');
-            $table->string('first_name');
-            $table->string('last_name');
+            $table->string('fio');
+            $table->date('birth_date');
             $table->string('phone');
             $table->string('email')->unique();
             $table->boolean('is_admin')->default(false);
@@ -808,7 +815,7 @@ class User extends Authenticatable
 {
     use HasFactory, Notifiable;
 
-    protected $fillable = ['login', 'password', 'first_name', 'last_name', 'phone', 'email', 'is_admin'];
+    protected $fillable = ['login', 'password', 'fio', 'birth_date', 'phone', 'email', 'is_admin'];
 
     protected $hidden = ['password', 'remember_token'];
 
@@ -816,19 +823,22 @@ class User extends Authenticatable
     {
         return [
             'password' => 'hashed',
+            'birth_date' => 'date',
             'is_admin' => 'boolean',
         ];
     }
 
     public function getNameAttribute(): string
     {
-        return trim($this->first_name . ' ' . $this->last_name);
+        return $this->fio;
     }
 }
 PHP;
     }
 
-    private function getTestDriveRequestMigration(): string
+    // ─── Variant 2: Conference Booking ────────────────────────────────
+
+    private function getConferenceBookingMigration(): string
     {
         return <<<'PHP'
 <?php
@@ -841,35 +851,28 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('test_drive_requests', function (Blueprint $table) {
+        Schema::create('conference_bookings', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
-            $table->string('address');
-            $table->string('phone');
-            $table->date('desired_date');
-            $table->time('desired_time');
-            $table->string('license_series');
-            $table->string('license_number');
-            $table->date('license_issue_date');
-            $table->string('car_brand');
-            $table->string('car_model');
+            $table->enum('room_type', ['auditorium', 'coworking', 'cinema']);
+            $table->date('conference_date');
+            $table->time('start_time');
             $table->enum('payment_type', ['cash', 'card']);
-            $table->boolean('is_agreed')->default(false);
-            $table->enum('status', ['в работе', 'одобрено', 'выполнено', 'отклонено'])->default('в работе');
-            $table->text('rejection_reason')->nullable();
+            $table->enum('status', ['new', 'assigned', 'completed'])->default('new');
+            $table->text('review_text')->nullable();
             $table->timestamps();
         });
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('test_drive_requests');
+        Schema::dropIfExists('conference_bookings');
     }
 };
 PHP;
     }
 
-    private function getTestDriveRequestModel(): string
+    private function getConferenceBookingModel(): string
     {
         return <<<'PHP'
 <?php
@@ -879,32 +882,23 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class TestDriveRequest extends Model
+class ConferenceBooking extends Model
 {
     protected $fillable = [
         'user_id',
-        'address',
-        'phone',
-        'desired_date',
-        'desired_time',
-        'license_series',
-        'license_number',
-        'license_issue_date',
-        'car_brand',
-        'car_model',
+        'room_type',
+        'conference_date',
+        'start_time',
         'payment_type',
-        'is_agreed',
         'status',
-        'rejection_reason',
+        'review_text',
     ];
 
     protected function casts(): array
     {
         return [
-            'desired_date' => 'date',
-            'desired_time' => 'string',
-            'license_issue_date' => 'date',
-            'is_agreed' => 'boolean',
+            'conference_date' => 'date',
+            'start_time' => 'string',
         ];
     }
 
@@ -916,38 +910,39 @@ class TestDriveRequest extends Model
 PHP;
     }
 
-    private function getTestDriveRequestResource(): string
+    private function getConferenceBookingResource(): string
     {
         return <<<'PHP'
 <?php
 
 namespace App\Filament\Resources;
 
-use App\Filament\Resources\TestDriveRequestResource\Pages;
-use App\Models\TestDriveRequest;
-use Filament\Forms\Components\Checkbox;
+use App\Filament\Resources\ConferenceBookingResource\Pages;
+use App\Models\ConferenceBooking;
+use Filament\Actions\Action;
+use Filament\Actions\BulkActionGroup;
+use Filament\Actions\DeleteBulkAction;
+use Filament\Actions\EditAction;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Radio;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
-use Filament\Forms\Components\TimePicker;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
-use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 
-class TestDriveRequestResource extends Resource
+class ConferenceBookingResource extends Resource
 {
-    protected static ?string $model = TestDriveRequest::class;
+    protected static ?string $model = ConferenceBooking::class;
 
-    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-truck';
+    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-building-office';
 
-    protected static ?string $navigationLabel = 'Заявки на тест-драйв';
+    protected static ?string $navigationLabel = 'Заявки на бронирование';
 
     protected static ?string $modelLabel = 'заявка';
 
@@ -957,115 +952,46 @@ class TestDriveRequestResource extends Resource
     {
         return $schema
             ->components([
-                Section::make('Данные о заявке')
+                Section::make('Данные о конференции')
                     ->schema([
-                        TextInput::make('address')
-                            ->label('Адрес')
+                        Select::make('room_type')
+                            ->label('Тип помещения')
+                            ->options([
+                                'auditorium' => 'Аудитория',
+                                'coworking' => 'Коворкинг',
+                                'cinema' => 'Кинозал',
+                            ])
                             ->required(fn (string $operation): bool => $operation === 'create')
                             ->disabled(fn (string $operation): bool => $operation === 'edit')
                             ->validationMessages([
-                                'required' => 'Поле адреса обязательно для заполнения.',
+                                'required' => 'Выберите тип помещения.',
                             ]),
-                        TextInput::make('phone')
-                            ->label('Контактный телефон')
-                            ->mask('+7(999)-999-99-99')
-                            ->required(fn (string $operation): bool => $operation === 'create')
-                            ->disabled(fn (string $operation): bool => $operation === 'edit')
-                            ->rules(['regex:/^\+7\(\d{3}\)-\d{3}-\d{2}-\d{2}$/'])
-                            ->validationMessages([
-                                'required' => 'Поле телефона обязательно для заполнения.',
-                                'regex' => 'Телефон должен быть в формате +7(XXX)-XXX-XX-XX.',
-                            ]),
-                        DatePicker::make('desired_date')
-                            ->label('Желаемая дата')
+                        DatePicker::make('conference_date')
+                            ->label('Дата начала конференции')
                             ->required(fn (string $operation): bool => $operation === 'create')
                             ->disabled(fn (string $operation): bool => $operation === 'edit')
                             ->minDate(now()->format('Y-m-d'))
                             ->validationMessages([
-                                'required' => 'Поле даты обязательно для заполнения.',
+                                'required' => 'Выберите дату конференции.',
                             ]),
-                        TimePicker::make('desired_time')
-                            ->label('Желаемое время')
-                            ->required(fn (string $operation): bool => $operation === 'create')
-                            ->disabled(fn (string $operation): bool => $operation === 'edit')
-                            ->validationMessages([
-                                'required' => 'Поле времени обязательно для заполнения.',
-                            ]),
-                    ])
-                    ->columns(2),
-
-                Section::make('Водительское удостоверение')
-                    ->schema([
-                        TextInput::make('license_series')
-                            ->label('Серия')
-                            ->required(fn (string $operation): bool => $operation === 'create')
-                            ->disabled(fn (string $operation): bool => $operation === 'edit')
-                            ->validationMessages([
-                                'required' => 'Поле серии ВУ обязательно для заполнения.',
-                            ]),
-                        TextInput::make('license_number')
-                            ->label('Номер')
-                            ->required(fn (string $operation): bool => $operation === 'create')
-                            ->disabled(fn (string $operation): bool => $operation === 'edit')
-                            ->validationMessages([
-                                'required' => 'Поле номера ВУ обязательно для заполнения.',
-                            ]),
-                        DatePicker::make('license_issue_date')
-                            ->label('Дата выдачи')
-                            ->required(fn (string $operation): bool => $operation === 'create')
-                            ->disabled(fn (string $operation): bool => $operation === 'edit')
-                            ->validationMessages([
-                                'required' => 'Поле даты выдачи ВУ обязательно для заполнения.',
-                            ]),
-                    ])
-                    ->columns(3),
-
-                Section::make('Автомобиль')
-                    ->schema([
-                        Select::make('car_brand')
-                            ->label('Марка автомобиля')
+                        Select::make('start_time')
+                            ->label('Время начала')
                             ->options([
-                                'Lada' => 'Lada',
-                                'Toyota' => 'Toyota',
-                                'Hyundai' => 'Hyundai',
+                                '09:00' => '09:00',
+                                '10:00' => '10:00',
+                                '11:00' => '11:00',
+                                '12:00' => '12:00',
+                                '13:00' => '13:00',
+                                '14:00' => '14:00',
+                                '15:00' => '15:00',
+                                '16:00' => '16:00',
+                                '17:00' => '17:00',
+                                '18:00' => '18:00',
                             ])
                             ->required(fn (string $operation): bool => $operation === 'create')
                             ->disabled(fn (string $operation): bool => $operation === 'edit')
-                            ->live()
                             ->validationMessages([
-                                'required' => 'Выберите марку автомобиля.',
-                            ]),
-                        Select::make('car_model')
-                            ->label('Модель автомобиля')
-                            ->options(fn (Get $get) => match ($get('car_brand')) {
-                                'Lada' => [
-                                    'Vesta' => 'Vesta',
-                                    'Granta' => 'Granta',
-                                    'Niva' => 'Niva',
-                                    'Largus' => 'Largus',
-                                    'XRAY' => 'XRAY',
-                                ],
-                                'Toyota' => [
-                                    'Camry' => 'Camry',
-                                    'RAV4' => 'RAV4',
-                                    'Corolla' => 'Corolla',
-                                    'Land Cruiser' => 'Land Cruiser',
-                                    'Yaris' => 'Yaris',
-                                ],
-                                'Hyundai' => [
-                                    'Solaris' => 'Solaris',
-                                    'Creta' => 'Creta',
-                                    'Elantra' => 'Elantra',
-                                    'Tucson' => 'Tucson',
-                                    'Santa Fe' => 'Santa Fe',
-                                ],
-                                default => [],
-                            })
-                            ->required(fn (string $operation): bool => $operation === 'create')
-                            ->disabled(fn (string $operation): bool => $operation === 'edit')
-                            ->hidden(fn (Get $get) => !$get('car_brand'))
-                            ->validationMessages([
-                                'required' => 'Выберите модель автомобиля.',
+                                'required' => 'Выберите время начала конференции.',
                             ]),
                     ])
                     ->columns(2),
@@ -1073,7 +999,7 @@ class TestDriveRequestResource extends Resource
                 Section::make('Оплата')
                     ->schema([
                         Radio::make('payment_type')
-                            ->label('Тип оплаты')
+                            ->label('Способ оплаты')
                             ->options([
                                 'cash' => 'Наличные',
                                 'card' => 'Банковская карта',
@@ -1081,19 +1007,7 @@ class TestDriveRequestResource extends Resource
                             ->required(fn (string $operation): bool => $operation === 'create')
                             ->disabled(fn (string $operation): bool => $operation === 'edit')
                             ->validationMessages([
-                                'required' => 'Выберите тип оплаты.',
-                            ]),
-                    ]),
-
-                Section::make('Согласие')
-                    ->schema([
-                        Checkbox::make('is_agreed')
-                            ->label('Я ознакомлен с правилами предоставления услуги тест-драйва и все предоставленные данные верны')
-                            ->rules(['accepted'])
-                            ->live()
-                            ->hidden(fn (string $operation): bool => $operation === 'edit')
-                            ->validationMessages([
-                                'accepted' => 'Необходимо подтвердить согласие с правилами.',
+                                'required' => 'Выберите способ оплаты.',
                             ]),
                     ]),
 
@@ -1102,18 +1016,21 @@ class TestDriveRequestResource extends Resource
                         Select::make('status')
                             ->label('Статус заявки')
                             ->options([
-                                'в работе' => 'В работе',
-                                'одобрено' => 'Одобрено',
-                                'выполнено' => 'Выполнено',
-                                'отклонено' => 'Отклонено',
+                                'new' => 'Новая',
+                                'assigned' => 'Мероприятие назначено',
+                                'completed' => 'Мероприятие завершено',
                             ])
                             ->required()
                             ->live()
                             ->visible(fn (string $operation): bool => $operation === 'edit' && auth()->user()?->is_admin),
-                        Textarea::make('rejection_reason')
-                            ->label('Причина отклонения')
-                            ->required(fn (Get $get): bool => $get('status') === 'отклонено')
-                            ->visible(fn (string $operation, Get $get): bool => $operation === 'edit' && auth()->user()?->is_admin && $get('status') === 'отклонено'),
+                    ]),
+
+                Section::make('Отзыв')
+                    ->schema([
+                        Textarea::make('review_text')
+                            ->label('Отзыв')
+                            ->disabled()
+                            ->visible(fn (string $operation): bool => $operation === 'edit' && auth()->user()?->is_admin),
                     ]),
             ]);
     }
@@ -1126,57 +1043,58 @@ class TestDriveRequestResource extends Resource
                     ->label('ID')
                     ->sortable(),
                 Tables\Columns\TextColumn::make('user.fio')
-                    ->label('ФИО клиента')
+                    ->label('ФИО')
                     ->searchable(),
-                Tables\Columns\TextColumn::make('phone')
-                    ->label('Телефон'),
-                Tables\Columns\TextColumn::make('address')
-                    ->label('Адрес')
-                    ->toggleable(isToggledHiddenByDefault: false)
-                    ->searchable(),
-                Tables\Columns\TextColumn::make('car_brand')
-                    ->label('Марка'),
-                Tables\Columns\TextColumn::make('car_model')
-                    ->label('Модель'),
-                Tables\Columns\TextColumn::make('desired_date')
+                Tables\Columns\TextColumn::make('user.email')
+                    ->label('Email')
+                    ->searchable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                Tables\Columns\TextColumn::make('user.phone')
+                    ->label('Телефон')
+                    ->toggleable(isToggledHiddenByDefault: true),
+                Tables\Columns\TextColumn::make('room_type')
+                    ->label('Помещение')
+                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                        'auditorium' => 'Аудитория',
+                        'coworking' => 'Коворкинг',
+                        'cinema' => 'Кинозал',
+                        default => $state,
+                    })
+                    ->badge()
+                    ->color(fn (string $state): string => match ($state) {
+                        'auditorium' => 'info',
+                        'coworking' => 'warning',
+                        'cinema' => 'success',
+                        default => 'gray',
+                    }),
+                Tables\Columns\TextColumn::make('conference_date')
                     ->label('Дата')
-                    ->date(),
-                Tables\Columns\TextColumn::make('desired_time')
-                    ->label('Время'),
-                Tables\Columns\TextColumn::make('license_series')
-                    ->label('Серия ВУ')
-                    ->toggleable(isToggledHiddenByDefault: false)
-                    ->searchable(),
-                Tables\Columns\TextColumn::make('license_number')
-                    ->label('Номер ВУ')
-                    ->toggleable(isToggledHiddenByDefault: false)
-                    ->searchable(),
-                Tables\Columns\TextColumn::make('license_issue_date')
-                    ->label('Дата выдачи ВУ')
                     ->date()
-                    ->toggleable(isToggledHiddenByDefault: false),
+                    ->sortable(),
+                Tables\Columns\TextColumn::make('start_time')
+                    ->label('Время'),
                 Tables\Columns\TextColumn::make('payment_type')
-                    ->label('Тип оплаты')
+                    ->label('Оплата')
                     ->formatStateUsing(fn (string $state): string => match ($state) {
                         'cash' => 'Наличные',
                         'card' => 'Банковская карта',
                         default => $state,
-                    })
-                    ->toggleable(isToggledHiddenByDefault: false),
+                    }),
                 Tables\Columns\TextColumn::make('status')
                     ->label('Статус')
                     ->badge()
+                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                        'new' => 'Новая',
+                        'assigned' => 'Мероприятие назначено',
+                        'completed' => 'Мероприятие завершено',
+                        default => $state,
+                    })
                     ->color(fn (string $state): string => match ($state) {
-                        'в работе' => 'info',
-                        'одобрено' => 'success',
-                        'выполнено' => 'primary',
-                        'отклонено' => 'danger',
+                        'new' => 'info',
+                        'assigned' => 'success',
+                        'completed' => 'primary',
                         default => 'gray',
                     }),
-                Tables\Columns\TextColumn::make('rejection_reason')
-                    ->label('Причина отклонения')
-                    ->placeholder('—')
-                    ->toggleable(isToggledHiddenByDefault: true),
                 Tables\Columns\TextColumn::make('created_at')
                     ->label('Создана')
                     ->dateTime()
@@ -1187,19 +1105,45 @@ class TestDriveRequestResource extends Resource
                 Tables\Filters\SelectFilter::make('status')
                     ->label('Статус')
                     ->options([
-                        'в работе' => 'В работе',
-                        'одобрено' => 'Одобрено',
-                        'выполнено' => 'Выполнено',
-                        'отклонено' => 'Отклонено',
+                        'new' => 'Новая',
+                        'assigned' => 'Мероприятие назначено',
+                        'completed' => 'Мероприятие завершено',
+                    ]),
+                Tables\Filters\SelectFilter::make('room_type')
+                    ->label('Помещение')
+                    ->options([
+                        'auditorium' => 'Аудитория',
+                        'coworking' => 'Коворкинг',
+                        'cinema' => 'Кинозал',
                     ]),
             ])
             ->actions([
-                \Filament\Actions\EditAction::make()
-                    ->label('Редактировать'),
+                Action::make('review')
+                    ->label('Оставить отзыв')
+                    ->icon('heroicon-o-chat-bubble-left-ellipsis')
+                    ->visible(fn ($record) => $record->status === 'completed' && !auth()->user()?->is_admin && !$record->review_text)
+                    ->form([
+                        Textarea::make('review_text')
+                            ->label('Ваш отзыв')
+                            ->required()
+                            ->maxLength(2000),
+                    ])
+                    ->action(function (array $data, $record): void {
+                        $record->update([
+                            'review_text' => $data['review_text'],
+                        ]);
+                        Notification::make()
+                            ->success()
+                            ->title('Отзыв сохранен!')
+                            ->send();
+                    }),
+                EditAction::make()
+                    ->label('Редактировать')
+                    ->visible(fn ($record) => auth()->user()?->is_admin),
             ])
             ->bulkActions([
-                \Filament\Actions\BulkActionGroup::make([
-                    \Filament\Actions\DeleteBulkAction::make(),
+                BulkActionGroup::make([
+                    DeleteBulkAction::make(),
                 ]),
             ])
             ->defaultSort('created_at', 'desc')
@@ -1220,33 +1164,33 @@ class TestDriveRequestResource extends Resource
     public static function getPages(): array
     {
         return [
-            'index' => Pages\ListTestDriveRequests::route('/'),
-            'create' => Pages\CreateTestDriveRequest::route('/create'),
-            'edit' => Pages\EditTestDriveRequest::route('/{record}/edit'),
+            'index' => Pages\ListConferenceBookings::route('/'),
+            'create' => Pages\CreateConferenceBooking::route('/create'),
+            'edit' => Pages\EditConferenceBooking::route('/{record}/edit'),
         ];
     }
 }
 PHP;
     }
 
-    private function getListTestDriveRequestsPage(): string
+    private function getListConferenceBookingsPage(): string
     {
         return <<<'PHP'
 <?php
 
-namespace App\Filament\Resources\TestDriveRequestResource\Pages;
+namespace App\Filament\Resources\ConferenceBookingResource\Pages;
 
-use App\Filament\Resources\TestDriveRequestResource;
+use App\Filament\Resources\ConferenceBookingResource;
 use Filament\Actions;
 use Filament\Resources\Pages\ListRecords;
 
-class ListTestDriveRequests extends ListRecords
+class ListConferenceBookings extends ListRecords
 {
-    protected static string $resource = TestDriveRequestResource::class;
+    protected static string $resource = ConferenceBookingResource::class;
 
     public function getTitle(): string
     {
-        return 'Заявки на тест-драйв';
+        return auth()->user()?->is_admin ? 'Управление заявками' : 'Мои заявки';
     }
 
     protected function getHeaderActions(): array
@@ -1260,29 +1204,30 @@ class ListTestDriveRequests extends ListRecords
 PHP;
     }
 
-    private function getCreateTestDriveRequestPage(): string
+    private function getCreateConferenceBookingPage(): string
     {
         return <<<'PHP'
 <?php
 
-namespace App\Filament\Resources\TestDriveRequestResource\Pages;
+namespace App\Filament\Resources\ConferenceBookingResource\Pages;
 
-use App\Filament\Resources\TestDriveRequestResource;
+use App\Filament\Resources\ConferenceBookingResource;
 use Filament\Resources\Pages\CreateRecord;
 use Illuminate\Database\Eloquent\Model;
 
-class CreateTestDriveRequest extends CreateRecord
+class CreateConferenceBooking extends CreateRecord
 {
-    protected static string $resource = TestDriveRequestResource::class;
+    protected static string $resource = ConferenceBookingResource::class;
 
     public function getTitle(): string
     {
-        return 'Новая заявка на тест-драйв';
+        return 'Новая заявка на бронирование';
     }
 
     protected function handleRecordCreation(array $data): Model
     {
         $data['user_id'] = auth()->id();
+        $data['status'] = 'new';
 
         return static::getModel()::create($data);
     }
@@ -1290,8 +1235,7 @@ class CreateTestDriveRequest extends CreateRecord
     protected function getCreateFormAction(): \Filament\Actions\Action
     {
         return parent::getCreateFormAction()
-            ->label('Отправить заявку')
-            ->disabled(fn (): bool => !$this->data['is_agreed']);
+            ->label('Отправить заявку');
     }
 
     protected function getFormActions(): array
@@ -1308,27 +1252,26 @@ class CreateTestDriveRequest extends CreateRecord
 
     protected function getCreatedNotificationTitle(): string
     {
-        return 'Заявка успешно создана!';
+        return 'Заявка успешно отправлена!';
     }
 }
 PHP;
     }
 
-    private function getEditTestDriveRequestPage(): string
+    private function getEditConferenceBookingPage(): string
     {
         return <<<'PHP'
 <?php
 
-namespace App\Filament\Resources\TestDriveRequestResource\Pages;
+namespace App\Filament\Resources\ConferenceBookingResource\Pages;
 
-use App\Filament\Resources\TestDriveRequestResource;
+use App\Filament\Resources\ConferenceBookingResource;
 use Filament\Actions;
-use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
 
-class EditTestDriveRequest extends EditRecord
+class EditConferenceBooking extends EditRecord
 {
-    protected static string $resource = TestDriveRequestResource::class;
+    protected static string $resource = ConferenceBookingResource::class;
 
     public function getTitle(): string
     {
@@ -1358,16 +1301,6 @@ class EditTestDriveRequest extends EditRecord
         ];
     }
 
-    protected function afterSave(): void
-    {
-        if ($this->record->status === 'отклонено' && !$this->record->rejection_reason) {
-            Notification::make()
-                ->warning()
-                ->title('Укажите причину отклонения')
-                ->send();
-        }
-    }
-
     protected function getSavedNotificationTitle(): ?string
     {
         return 'Заявка обновлена!';
@@ -1381,9 +1314,9 @@ class EditTestDriveRequest extends EditRecord
 PHP;
     }
 
-    // ─── Variant 2: BookCard ───────────────────────────────────────────
+    // ─── Variant 3: Training Application ───────────────────────────────
 
-    private function getBookCardMigration(): string
+    private function getTrainingApplicationMigration(): string
     {
         return <<<'PHP'
 <?php
@@ -1396,32 +1329,28 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('book_cards', function (Blueprint $table) {
+        Schema::create('training_applications', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
-            $table->string('author');
-            $table->string('title');
-            $table->enum('type', ['share', 'wish']);
-            $table->string('publisher')->nullable();
-            $table->year('pub_year')->nullable();
-            $table->enum('binding', ['hard', 'soft'])->nullable();
-            $table->enum('condition', ['perfect', 'normal', 'attention', 'table_leg'])->nullable();
-            $table->enum('status', ['pending', 'published', 'rejected'])->default('pending');
-            $table->text('rejection_reason')->nullable();
-            $table->softDeletes();
+            $table->enum('transport_type', ['bus', 'electric_bus', 'tram']);
+            $table->date('training_date');
+            $table->time('start_time');
+            $table->enum('payment_type', ['cash', 'card']);
+            $table->enum('status', ['new', 'in_progress', 'completed'])->default('new');
+            $table->text('review_text')->nullable();
             $table->timestamps();
         });
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('book_cards');
+        Schema::dropIfExists('training_applications');
     }
 };
 PHP;
     }
 
-    private function getBookCardModel(): string
+    private function getTrainingApplicationModel(): string
     {
         return <<<'PHP'
 <?php
@@ -1430,24 +1359,26 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\SoftDeletes;
 
-class BookCard extends Model
+class TrainingApplication extends Model
 {
-    use SoftDeletes;
-
     protected $fillable = [
         'user_id',
-        'author',
-        'title',
-        'type',
-        'publisher',
-        'pub_year',
-        'binding',
-        'condition',
+        'transport_type',
+        'training_date',
+        'start_time',
+        'payment_type',
         'status',
-        'rejection_reason',
+        'review_text',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'training_date' => 'date',
+            'start_time' => 'string',
+        ];
+    }
 
     public function user(): BelongsTo
     {
@@ -1457,146 +1388,169 @@ class BookCard extends Model
 PHP;
     }
 
-    private function getBookCardResource(): string
+    private function getTrainingApplicationResource(): string
     {
         return <<<'PHP'
 <?php
 
 namespace App\Filament\Resources;
 
-use App\Filament\Resources\BookCardResource\Pages;
-use App\Models\BookCard;
+use App\Filament\Resources\TrainingApplicationResource\Pages;
+use App\Models\TrainingApplication;
+use Filament\Actions\Action;
+use Filament\Actions\BulkActionGroup;
+use Filament\Actions\DeleteBulkAction;
+use Filament\Actions\EditAction;
+use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Radio;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
-use Filament\Navigation\NavigationItem;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
-use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\SoftDeletingScope;
 
-class BookCardResource extends Resource
+class TrainingApplicationResource extends Resource
 {
-    protected static ?string $model = BookCard::class;
+    protected static ?string $model = TrainingApplication::class;
 
-    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-book-open';
+    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-truck';
 
-    protected static ?string $modelLabel = 'карточка';
+    protected static ?string $navigationLabel = 'Заявки на обучение';
 
-    protected static ?string $pluralModelLabel = 'карточки';
+    protected static ?string $modelLabel = 'заявка';
 
-    public static function getNavigationItems(): array
-    {
-        if (auth()->user()?->is_admin) {
-            return [
-                NavigationItem::make('Панель модератора')
-                    ->icon('heroicon-o-shield-check')
-                    ->group('Модерация')
-                    ->sort(1)
-                    ->url(static::getNavigationUrl()),
-            ];
-        }
-
-        return [
-            NavigationItem::make('Мои книги и Архив')
-                ->icon(static::getNavigationIcon())
-                ->sort(1)
-                ->url(static::getNavigationUrl()),
-        ];
-    }
-
-    public static function canAccess(): bool
-    {
-        return true;
-    }
+    protected static ?string $pluralModelLabel = 'заявки';
 
     public static function form(Schema $schema): Schema
     {
         return $schema
             ->components([
-                Section::make('Основная информация')
+                Section::make('Информация о заявителе')
+                    ->description('Данные пользователя, подавшего заявку')
+                    ->icon('heroicon-o-user')
+                    ->columns(2)
                     ->schema([
-                        TextInput::make('author')
-                            ->label('Автор книги')
-                            ->required(fn (string $operation): bool => $operation === 'create')
-                            ->disabled(fn (string $operation): bool => $operation === 'edit')
-                            ->validationMessages([
-                                'required' => 'Поле автора обязательно для заполнения.',
-                            ]),
-                        TextInput::make('title')
-                            ->label('Название книги')
-                            ->required(fn (string $operation): bool => $operation === 'create')
-                            ->disabled(fn (string $operation): bool => $operation === 'edit')
-                            ->validationMessages([
-                                'required' => 'Поле названия обязательно для заполнения.',
-                            ]),
-                        Radio::make('type')
-                            ->label('Тип карточки')
+                        TextInput::make('user.fio')
+                            ->label('ФИО')
+                            ->disabled()
+                            ->visible(fn (string $operation): bool => $operation === 'edit'),
+                        TextInput::make('user.email')
+                            ->label('Электронная почта')
+                            ->disabled()
+                            ->visible(fn (string $operation): bool => $operation === 'edit'),
+                        TextInput::make('user.phone')
+                            ->label('Телефон')
+                            ->disabled()
+                            ->visible(fn (string $operation): bool => $operation === 'edit'),
+                        TextInput::make('user.birth_date')
+                            ->label('Дата рождения')
+                            ->disabled()
+                            ->visible(fn (string $operation): bool => $operation === 'edit'),
+                    ]),
+
+                Section::make('Данные об обучении')
+                    ->description('Выберите транспорт, дату и время обучения')
+                    ->icon('heroicon-o-truck')
+                    ->columns(2)
+                    ->schema([
+                        Radio::make('transport_type')
+                            ->label('Тип транспорта')
                             ->options([
-                                'share' => 'Готов поделиться',
-                                'wish' => 'Хочу в свою библиотеку',
+                                'bus' => 'Автобус',
+                                'electric_bus' => 'Электробус',
+                                'tram' => 'Трамвай',
                             ])
                             ->required(fn (string $operation): bool => $operation === 'create')
                             ->disabled(fn (string $operation): bool => $operation === 'edit')
                             ->validationMessages([
-                                'required' => 'Выберите тип карточки.',
+                                'required' => 'Выберите тип транспорта.',
+                            ]),
+
+                        DatePicker::make('training_date')
+                            ->label('Дата обучения')
+                            ->required(fn (string $operation): bool => $operation === 'create')
+                            ->disabled(fn (string $operation): bool => $operation === 'edit')
+                            ->validationMessages([
+                                'required' => 'Выберите дату обучения.',
+                            ]),
+
+                        Select::make('start_time')
+                            ->label('Время начала')
+                            ->options([
+                                '09:00' => '09:00',
+                                '10:00' => '10:00',
+                                '11:00' => '11:00',
+                                '12:00' => '12:00',
+                                '13:00' => '13:00',
+                                '14:00' => '14:00',
+                                '15:00' => '15:00',
+                                '16:00' => '16:00',
+                                '17:00' => '17:00',
+                                '18:00' => '18:00',
+                            ])
+                            ->required(fn (string $operation): bool => $operation === 'create')
+                            ->disabled(fn (string $operation): bool => $operation === 'edit')
+                            ->validationMessages([
+                                'required' => 'Выберите время начала.',
+                            ]),
+
+                        Select::make('payment_type')
+                            ->label('Способ оплаты')
+                            ->options([
+                                'cash' => 'Наличные',
+                                'card' => 'Банковская карта',
+                            ])
+                            ->required(fn (string $operation): bool => $operation === 'create')
+                            ->disabled(fn (string $operation): bool => $operation === 'edit')
+                            ->validationMessages([
+                                'required' => 'Выберите способ оплаты.',
                             ]),
                     ]),
 
-                Section::make('Детали книги (необязательно)')
-                    ->schema([
-                        TextInput::make('publisher')
-                            ->label('Издательство')
-                            ->disabled(fn (string $operation): bool => $operation === 'edit'),
-                        TextInput::make('pub_year')
-                            ->label('Год издания')
-                            ->numeric()
-                            ->minValue(1000)
-                            ->maxValue(now()->year)
-                            ->disabled(fn (string $operation): bool => $operation === 'edit'),
-                        Select::make('binding')
-                            ->label('Переплет')
-                            ->options([
-                                'hard' => 'твердый',
-                                'soft' => 'мягкий',
-                            ])
-                            ->placeholder('Не выбрано')
-                            ->disabled(fn (string $operation): bool => $operation === 'edit'),
-                        Select::make('condition')
-                            ->label('Состояние книги')
-                            ->options([
-                                'perfect' => 'идеальное',
-                                'normal' => 'нормальное',
-                                'attention' => 'требует внимания',
-                                'table_leg' => 'годится чтобы подпирать ножку стола',
-                            ])
-                            ->placeholder('Не выбрано')
-                            ->disabled(fn (string $operation): bool => $operation === 'edit'),
-                    ])
-                    ->columns(2),
-
                 Section::make('Управление статусом')
+                    ->description('Изменение статуса обработки заявки')
+                    ->icon('heroicon-o-arrow-path')
                     ->schema([
                         Select::make('status')
-                            ->label('Статус карточки')
+                            ->label('Статус заявки')
                             ->options([
-                                'pending' => 'На рассмотрении',
-                                'published' => 'Опубликовано',
-                                'rejected' => 'Отклонено',
+                                'new' => 'Новая',
+                                'in_progress' => 'Идет обучение',
+                                'completed' => 'Обучение завершено',
                             ])
                             ->required()
                             ->live()
                             ->visible(fn (string $operation): bool => $operation === 'edit' && auth()->user()?->is_admin),
-                        Textarea::make('rejection_reason')
-                            ->label('Причина отклонения')
-                            ->required(fn (Get $get): bool => $get('status') === 'rejected')
-                            ->visible(fn (string $operation, Get $get): bool => $operation === 'edit' && auth()->user()?->is_admin && $get('status') === 'rejected'),
+                    ]),
+
+                Section::make('Отзыв клиента')
+                    ->description('Отзыв, оставленный после завершения обучения')
+                    ->icon('heroicon-o-chat-bubble-left-ellipsis')
+                    ->schema([
+                        Textarea::make('review_text')
+                            ->label('Отзыв')
+                            ->disabled()
+                            ->visible(fn (string $operation): bool => $operation === 'edit' && auth()->user()?->is_admin),
+                    ]),
+
+                Section::make('Информация о заявке')
+                    ->description('Служебная информация')
+                    ->icon('heroicon-o-document-text')
+                    ->columns(2)
+                    ->schema([
+                        TextInput::make('created_at')
+                            ->label('Дата создания')
+                            ->disabled()
+                            ->visible(fn (string $operation): bool => $operation === 'edit'),
+                        TextInput::make('updated_at')
+                            ->label('Дата обновления')
+                            ->disabled()
+                            ->visible(fn (string $operation): bool => $operation === 'edit'),
                     ]),
             ]);
     }
@@ -1609,603 +1563,107 @@ class BookCardResource extends Resource
                     ->label('ID')
                     ->sortable(),
                 Tables\Columns\TextColumn::make('user.fio')
-                    ->label('Пользователь')
+                    ->label('ФИО')
                     ->searchable(),
-                Tables\Columns\TextColumn::make('author')
-                    ->label('Автор')
-                    ->searchable(),
-                Tables\Columns\TextColumn::make('title')
-                    ->label('Название')
-                    ->searchable(),
-                Tables\Columns\TextColumn::make('type')
-                    ->label('Тип')
-                    ->badge()
-                    ->formatStateUsing(fn (string $state): string => match ($state) {
-                        'share' => 'Поделиться',
-                        'wish' => 'В библиотеку',
-                        default => $state,
-                    })
-                    ->color(fn (string $state): string => match ($state) {
-                        'share' => 'success',
-                        'wish' => 'info',
-                        default => 'gray',
-                    }),
-                Tables\Columns\TextColumn::make('status')
-                    ->label('Статус')
-                    ->badge()
-                    ->formatStateUsing(fn (string $state): string => match ($state) {
-                        'pending' => 'На рассмотрении',
-                        'published' => 'Опубликовано',
-                        'rejected' => 'Отклонено',
-                        default => $state,
-                    })
-                    ->color(fn (string $state): string => match ($state) {
-                        'pending' => 'warning',
-                        'published' => 'success',
-                        'rejected' => 'danger',
-                        default => 'gray',
-                    }),
-                Tables\Columns\TextColumn::make('rejection_reason')
-                    ->label('Причина отклонения')
-                    ->placeholder('—'),
-                Tables\Columns\TextColumn::make('deleted_at')
-                    ->label('Архив')
-                    ->dateTime()
-                    ->placeholder('—'),
-            ])
-            ->filters([
-                Tables\Filters\SelectFilter::make('status')
-                    ->label('Статус')
-                    ->options([
-                        'pending' => 'На рассмотрении',
-                        'published' => 'Опубликовано',
-                        'rejected' => 'Отклонено',
-                    ]),
-                Tables\Filters\TrashedFilter::make()
-                    ->label('Архивные'),
-            ])
-            ->actions([
-                \Filament\Actions\EditAction::make()
-                    ->label('Редактировать')
-                    ->visible(fn ($record) => !auth()->user()?->is_admin),
-                \Filament\Actions\DeleteAction::make()
-                    ->label('Удалить')
-                    ->visible(fn ($record) => !auth()->user()?->is_admin),
-                \Filament\Actions\Action::make('publish')
-                    ->label('Опубликовать')
-                    ->icon('heroicon-o-check')
-                    ->color('success')
-                    ->visible(fn ($record) => auth()->user()?->is_admin && $record->status === 'pending')
-                    ->action(function ($record) {
-                        $record->update(['status' => 'published']);
-                        Notification::make()
-                            ->success()
-                            ->title('Карточка опубликована')
-                            ->send();
-                    }),
-                \Filament\Actions\Action::make('reject')
-                    ->label('Отклонить')
-                    ->icon('heroicon-o-x-mark')
-                    ->color('danger')
-                    ->visible(fn ($record) => auth()->user()?->is_admin && $record->status === 'pending')
-                    ->requiresConfirmation()
-                    ->form([
-                        Textarea::make('rejection_reason')
-                            ->label('Причина отклонения')
-                            ->required()
-                            ->validationMessages([
-                                'required' => 'Укажите причину отклонения.',
-                            ]),
-                    ])
-                    ->action(function (array $data, $record) {
-                        $record->update([
-                            'status' => 'rejected',
-                            'rejection_reason' => $data['rejection_reason'],
-                        ]);
-                        Notification::make()
-                            ->warning()
-                            ->title('Карточка отклонена')
-                            ->send();
-                    }),
-            ])
-            ->bulkActions([
-                \Filament\Actions\BulkActionGroup::make([
-                    \Filament\Actions\DeleteBulkAction::make(),
-                ]),
-            ])
-            ->defaultSort('created_at', 'desc')
-            ->poll('60s');
-    }
-
-    public static function getEloquentQuery(): Builder
-    {
-        $query = parent::getEloquentQuery();
-
-        if (!auth()->user()?->is_admin) {
-            $query->where('user_id', auth()->id())
-                ->withoutGlobalScopes([SoftDeletingScope::class]);
-        }
-
-        return $query;
-    }
-
-    public static function getPages(): array
-    {
-        return [
-            'index' => Pages\ListBookCards::route('/'),
-            'create' => Pages\CreateBookCard::route('/create'),
-            'edit' => Pages\EditBookCard::route('/{record}/edit'),
-        ];
-    }
-}
-PHP;
-    }
-
-    private function getListBookCardsPage(): string
-    {
-        return <<<'PHP'
-<?php
-
-namespace App\Filament\Resources\BookCardResource\Pages;
-
-use App\Filament\Resources\BookCardResource;
-use Filament\Actions;
-use Filament\Resources\Pages\ListRecords;
-
-use Filament\Schemas\Components\Tabs\Tab;
-use Illuminate\Database\Eloquent\Builder;
-
-class ListBookCards extends ListRecords
-{
-    protected static string $resource = BookCardResource::class;
-
-    public function getTitle(): string
-    {
-        return auth()->user()?->is_admin ? 'Панель модератора' : 'Мои книги и Архив';
-    }
-
-    public function getTabs(): array
-    {
-        if (auth()->user()?->is_admin) {
-            return [];
-        }
-
-        return [
-            'active' => Tab::make('Мои активные карточки')
-                ->query(fn (Builder $query) => $query->whereIn('status', ['pending', 'published'])->whereNull('deleted_at')),
-            'archive' => Tab::make('Архивные карточки')
-                ->query(fn (Builder $query) => $query->where(function (Builder $q) {
-                    $q->where('status', 'rejected')->orWhereNotNull('deleted_at');
-                })),
-        ];
-    }
-
-    protected function getHeaderActions(): array
-    {
-        return [
-            Actions\CreateAction::make()
-                ->label('Добавить книгу'),
-        ];
-    }
-}
-PHP;
-    }
-
-    private function getCreateBookCardPage(): string
-    {
-        return <<<'PHP'
-<?php
-
-namespace App\Filament\Resources\BookCardResource\Pages;
-
-use App\Filament\Resources\BookCardResource;
-use Filament\Resources\Pages\CreateRecord;
-use Illuminate\Database\Eloquent\Model;
-
-class CreateBookCard extends CreateRecord
-{
-    protected static string $resource = BookCardResource::class;
-
-    public function getTitle(): string
-    {
-        return 'Создание карточки';
-    }
-
-    protected function handleRecordCreation(array $data): Model
-    {
-        $data['user_id'] = auth()->id();
-        $data['status'] = 'pending';
-
-        return static::getModel()::create($data);
-    }
-
-    protected function getCreateFormAction(): \Filament\Actions\Action
-    {
-        return parent::getCreateFormAction()
-            ->label('Отправить');
-    }
-
-    protected function getFormActions(): array
-    {
-        return [
-            $this->getCreateFormAction()->label('Отправить'),
-        ];
-    }
-
-    protected function getRedirectUrl(): string
-    {
-        return $this->getResource()::getUrl('index');
-    }
-
-    protected function getCreatedNotificationTitle(): string
-    {
-        return 'Карточка успешно отправлена на рассмотрение администратору!';
-    }
-}
-PHP;
-    }
-
-    private function getEditBookCardPage(): string
-    {
-        return <<<'PHP'
-<?php
-
-namespace App\Filament\Resources\BookCardResource\Pages;
-
-use App\Filament\Resources\BookCardResource;
-use Filament\Actions;
-use Filament\Resources\Pages\EditRecord;
-
-class EditBookCard extends EditRecord
-{
-    protected static string $resource = BookCardResource::class;
-
-    public function getTitle(): string
-    {
-        return 'Редактирование карточки';
-    }
-
-    protected function getHeaderActions(): array
-    {
-        return [
-            Actions\DeleteAction::make()
-                ->label('Удалить')
-                ->visible(fn (): bool => !auth()->user()?->is_admin),
-            Actions\ForceDeleteAction::make()
-                ->label('Удалить навсегда')
-                ->visible(fn (): bool => !auth()->user()?->is_admin),
-            Actions\RestoreAction::make()
-                ->label('Восстановить')
-                ->visible(fn (): bool => !auth()->user()?->is_admin),
-        ];
-    }
-
-    protected function getFormActions(): array
-    {
-        if (!auth()->user()?->is_admin) {
-            return [];
-        }
-
-        return [
-            $this->getSaveFormAction()
-                ->label('Сохранить изменения'),
-            $this->getCancelFormAction()
-                ->label('Отмена'),
-        ];
-    }
-
-    protected function getSavedNotificationTitle(): ?string
-    {
-        return 'Карточка обновлена!';
-    }
-
-    protected function getRedirectUrl(): string
-    {
-        return $this->getResource()::getUrl('index');
-    }
-}
-PHP;
-    }
-
-    // ─── Variant 3: Booking ────────────────────────────────────────────
-
-    private function getBookingMigration(): string
-    {
-        return <<<'PHP'
-<?php
-
-use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
-
-return new class extends Migration
-{
-    public function up(): void
-    {
-        Schema::create('bookings', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('user_id')->constrained()->cascadeOnDelete();
-            $table->date('booking_date');
-            $table->time('booking_time');
-            $table->integer('guests_count');
-            $table->string('contact_phone');
-            $table->enum('status', ['new', 'completed', 'canceled'])->default('new');
-            $table->text('review_text')->nullable();
-            $table->unsignedTinyInteger('review_rating')->nullable();
-            $table->timestamps();
-        });
-    }
-
-    public function down(): void
-    {
-        Schema::dropIfExists('bookings');
-    }
-};
-PHP;
-    }
-
-    private function getBookingModel(): string
-    {
-        return <<<'PHP'
-<?php
-
-namespace App\Models;
-
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-
-class Booking extends Model
-{
-    protected $fillable = [
-        'user_id',
-        'booking_date',
-        'booking_time',
-        'guests_count',
-        'contact_phone',
-        'status',
-        'review_text',
-        'review_rating',
-    ];
-
-    protected function casts(): array
-    {
-        return [
-            'booking_date' => 'date',
-            'booking_time' => 'string',
-            'guests_count' => 'integer',
-            'review_rating' => 'integer',
-        ];
-    }
-
-    public function user(): BelongsTo
-    {
-        return $this->belongsTo(User::class);
-    }
-}
-PHP;
-    }
-
-    private function getBookingResource(): string
-    {
-        return <<<'PHP'
-<?php
-
-namespace App\Filament\Resources;
-
-use App\Filament\Resources\BookingResource\Pages;
-use App\Models\Booking;
-use Filament\Forms\Components\DatePicker;
-use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
-use Filament\Forms\Components\TextInput;
-use Filament\Forms\Components\TimePicker;
-use Filament\Notifications\Notification;
-use Filament\Resources\Resource;
-use Filament\Schemas\Components\Section;
-use Filament\Schemas\Components\Utilities\Get;
-use Filament\Schemas\Schema;
-use Filament\Tables;
-use Filament\Tables\Table;
-use Illuminate\Database\Eloquent\Builder;
-
-class BookingResource extends Resource
-{
-    protected static ?string $model = Booking::class;
-
-    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-calendar-days';
-
-    protected static ?string $navigationLabel = 'Бронирования';
-
-    protected static ?string $modelLabel = 'бронирование';
-
-    protected static ?string $pluralModelLabel = 'бронирования';
-
-    public static function form(Schema $schema): Schema
-    {
-        return $schema
-            ->components([
-                Section::make('Детали бронирования')
-                    ->schema([
-                        DatePicker::make('booking_date')
-                            ->label('Дата бронирования')
-                            ->required(fn (string $operation): bool => $operation === 'create')
-                            ->disabled(fn (string $operation): bool => $operation === 'edit')
-                            ->minDate(now()->format('Y-m-d'))
-                            ->validationMessages([
-                                'required' => 'Выберите дату бронирования.',
-                            ]),
-                        TimePicker::make('booking_time')
-                            ->label('Время бронирования')
-                            ->format('H:i')
-                            ->required(fn (string $operation): bool => $operation === 'create')
-                            ->disabled(fn (string $operation): bool => $operation === 'edit')
-                            ->validationMessages([
-                                'required' => 'Укажите время бронирования.',
-                            ]),
-                        TextInput::make('guests_count')
-                            ->label('Количество гостей')
-                            ->numeric()
-                            ->required(fn (string $operation): bool => $operation === 'create')
-                            ->disabled(fn (string $operation): bool => $operation === 'edit')
-                            ->minValue(1)
-                            ->maxValue(10)
-                            ->validationMessages([
-                                'required' => 'Укажите количество гостей.',
-                                'min' => 'Минимальное количество гостей — 1.',
-                                'max' => 'Максимальное количество гостей — 10.',
-                            ]),
-                        TextInput::make('contact_phone')
-                            ->label('Контактный телефон')
-                            ->mask('+7(999)-999-99-99')
-                            ->required(fn (string $operation): bool => $operation === 'create')
-                            ->disabled(fn (string $operation): bool => $operation === 'edit')
-                            ->rules(['regex:/^\+7\(\d{3}\)-\d{3}-\d{2}-\d{2}$/'])
-                            ->validationMessages([
-                                'required' => 'Укажите контактный телефон.',
-                                'regex' => 'Телефон должен быть в формате +7(XXX)-XXX-XX-XX.',
-                            ]),
-                    ])
-                    ->columns(2),
-
-                Section::make('Управление статусом')
-                    ->schema([
-                        Select::make('status')
-                            ->label('Статус бронирования')
-                            ->options([
-                                'new' => 'Новое',
-                                'completed' => 'Посещение состоялось',
-                                'canceled' => 'Отменено',
-                            ])
-                            ->required()
-                            ->live()
-                            ->visible(fn (string $operation): bool => $operation === 'edit' && auth()->user()?->is_admin),
-                        Textarea::make('review_text')
-                            ->label('Отзыв клиента')
-                            ->disabled()
-                            ->visible(fn (string $operation): bool => $operation === 'edit' && auth()->user()?->is_admin),
-                        TextInput::make('review_rating')
-                            ->label('Оценка клиента')
-                            ->disabled()
-                            ->visible(fn (string $operation): bool => $operation === 'edit' && auth()->user()?->is_admin),
-                    ]),
-            ]);
-    }
-
-    public static function table(Table $table): Table
-    {
-        return $table
-            ->columns([
-                Tables\Columns\TextColumn::make('id')
-                    ->label('ID')
-                    ->sortable(),
-                Tables\Columns\TextColumn::make('user.full_name')
-                    ->label('Клиент')
+                Tables\Columns\TextColumn::make('user.email')
+                    ->label('Email')
                     ->searchable()
-                    ->getStateUsing(fn ($record) => $record->user->first_name . ' ' . $record->user->last_name),
-                Tables\Columns\TextColumn::make('booking_date')
+                    ->toggleable(isToggledHiddenByDefault: true),
+                Tables\Columns\TextColumn::make('user.phone')
+                    ->label('Телефон')
+                    ->toggleable(isToggledHiddenByDefault: true),
+                Tables\Columns\TextColumn::make('transport_type')
+                    ->label('Транспорт')
+                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                        'bus' => 'Автобус',
+                        'electric_bus' => 'Электробус',
+                        'tram' => 'Трамвай',
+                        default => $state,
+                    })
+                    ->badge()
+                    ->color(fn (string $state): string => match ($state) {
+                        'bus' => 'info',
+                        'electric_bus' => 'success',
+                        'tram' => 'warning',
+                        default => 'gray',
+                    }),
+                Tables\Columns\TextColumn::make('training_date')
                     ->label('Дата')
                     ->date()
                     ->sortable(),
-                Tables\Columns\TextColumn::make('booking_time')
+                Tables\Columns\TextColumn::make('start_time')
                     ->label('Время'),
-                Tables\Columns\TextColumn::make('guests_count')
-                    ->label('Гости'),
-                Tables\Columns\TextColumn::make('contact_phone')
-                    ->label('Телефон'),
+                Tables\Columns\TextColumn::make('payment_type')
+                    ->label('Оплата')
+                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                        'cash' => 'Наличные',
+                        'card' => 'Банковская карта',
+                        default => $state,
+                    }),
                 Tables\Columns\TextColumn::make('status')
                     ->label('Статус')
                     ->badge()
                     ->formatStateUsing(fn (string $state): string => match ($state) {
-                        'new' => 'Новое',
-                        'completed' => 'Посещение состоялось',
-                        'canceled' => 'Отменено',
+                        'new' => 'Новая',
+                        'in_progress' => 'Идет обучение',
+                        'completed' => 'Обучение завершено',
                         default => $state,
                     })
                     ->color(fn (string $state): string => match ($state) {
                         'new' => 'info',
+                        'in_progress' => 'warning',
                         'completed' => 'success',
-                        'canceled' => 'danger',
                         default => 'gray',
                     }),
-                Tables\Columns\TextColumn::make('review_rating')
-                    ->label('Оценка')
-                    ->toggleable(isToggledHiddenByDefault: true),
-                Tables\Columns\TextColumn::make('review_text')
-                    ->label('Отзыв')
-                    ->limit(50)
+                Tables\Columns\TextColumn::make('created_at')
+                    ->label('Создана')
+                    ->dateTime()
+                    ->sortable()
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('status')
                     ->label('Статус')
                     ->options([
-                        'new' => 'Новое',
-                        'completed' => 'Посещение состоялось',
-                        'canceled' => 'Отменено',
+                        'new' => 'Новая',
+                        'in_progress' => 'Идет обучение',
+                        'completed' => 'Обучение завершено',
+                    ]),
+                Tables\Filters\SelectFilter::make('transport_type')
+                    ->label('Транспорт')
+                    ->options([
+                        'bus' => 'Автобус',
+                        'electric_bus' => 'Электробус',
+                        'tram' => 'Трамвай',
                     ]),
             ])
             ->actions([
-                \Filament\Actions\Action::make('review')
+                Action::make('review')
                     ->label('Оставить отзыв')
                     ->icon('heroicon-o-chat-bubble-left-ellipsis')
-                    ->visible(fn ($record) => $record->status === 'completed' && !auth()->user()?->is_admin)
+                    ->visible(fn ($record) => $record->status === 'completed' && !auth()->user()?->is_admin && !$record->review_text)
                     ->form([
                         Textarea::make('review_text')
-                            ->label('Отзыв')
+                            ->label('Ваш отзыв')
                             ->required()
-                            ->maxLength(1000),
-                        Select::make('review_rating')
-                            ->label('Оценка')
-                            ->options([
-                                1 => '1',
-                                2 => '2',
-                                3 => '3',
-                                4 => '4',
-                                5 => '5',
-                            ])
-                            ->required(),
+                            ->maxLength(2000),
                     ])
                     ->action(function (array $data, $record): void {
                         $record->update([
                             'review_text' => $data['review_text'],
-                            'review_rating' => $data['review_rating'],
                         ]);
                         Notification::make()
                             ->success()
                             ->title('Отзыв сохранен!')
                             ->send();
                     }),
-                \Filament\Actions\EditAction::make()
+                EditAction::make()
                     ->label('Редактировать')
-                    ->visible(fn ($record) => !auth()->user()?->is_admin),
-                \Filament\Actions\Action::make('complete')
-                    ->label('Подтвердить посещение')
-                    ->icon('heroicon-o-check')
-                    ->color('success')
-                    ->visible(fn ($record) => auth()->user()?->is_admin && $record->status === 'new')
-                    ->action(function ($record) {
-                        $record->update(['status' => 'completed']);
-                        Notification::make()
-                            ->success()
-                            ->title('Посещение подтверждено')
-                            ->send();
-                    }),
-                \Filament\Actions\Action::make('cancel')
-                    ->label('Отменить бронирование')
-                    ->icon('heroicon-o-x-mark')
-                    ->color('danger')
-                    ->visible(fn ($record) => auth()->user()?->is_admin && $record->status === 'new')
-                    ->action(function ($record) {
-                        $record->update(['status' => 'canceled']);
-                        Notification::make()
-                            ->warning()
-                            ->title('Бронирование отменено')
-                            ->send();
-                    }),
+                    ->visible(fn ($record) => auth()->user()?->is_admin),
             ])
             ->bulkActions([
-                \Filament\Actions\BulkActionGroup::make([
-                    \Filament\Actions\DeleteBulkAction::make(),
+                BulkActionGroup::make([
+                    DeleteBulkAction::make(),
                 ]),
             ])
             ->defaultSort('created_at', 'desc')
@@ -2226,64 +1684,64 @@ class BookingResource extends Resource
     public static function getPages(): array
     {
         return [
-            'index' => Pages\ListBookings::route('/'),
-            'create' => Pages\CreateBooking::route('/create'),
-            'edit' => Pages\EditBooking::route('/{record}/edit'),
+            'index' => Pages\ListTrainingApplications::route('/'),
+            'create' => Pages\CreateTrainingApplication::route('/create'),
+            'edit' => Pages\EditTrainingApplication::route('/{record}/edit'),
         ];
     }
 }
 PHP;
     }
 
-    private function getListBookingsPage(): string
+    private function getListTrainingApplicationsPage(): string
     {
         return <<<'PHP'
 <?php
 
-namespace App\Filament\Resources\BookingResource\Pages;
+namespace App\Filament\Resources\TrainingApplicationResource\Pages;
 
-use App\Filament\Resources\BookingResource;
+use App\Filament\Resources\TrainingApplicationResource;
 use Filament\Actions;
 use Filament\Resources\Pages\ListRecords;
 
-class ListBookings extends ListRecords
+class ListTrainingApplications extends ListRecords
 {
-    protected static string $resource = BookingResource::class;
+    protected static string $resource = TrainingApplicationResource::class;
 
     public function getTitle(): string
     {
-        return auth()->user()?->is_admin ? 'Управление бронированиями' : 'Мои бронирования';
+        return auth()->user()?->is_admin ? 'Управление заявками' : 'Мои заявки';
     }
 
     protected function getHeaderActions(): array
     {
         return [
             Actions\CreateAction::make()
-                ->label('Забронировать столик'),
+                ->label('Новая заявка'),
         ];
     }
 }
 PHP;
     }
 
-    private function getCreateBookingPage(): string
+    private function getCreateTrainingApplicationPage(): string
     {
         return <<<'PHP'
 <?php
 
-namespace App\Filament\Resources\BookingResource\Pages;
+namespace App\Filament\Resources\TrainingApplicationResource\Pages;
 
-use App\Filament\Resources\BookingResource;
+use App\Filament\Resources\TrainingApplicationResource;
 use Filament\Resources\Pages\CreateRecord;
 use Illuminate\Database\Eloquent\Model;
 
-class CreateBooking extends CreateRecord
+class CreateTrainingApplication extends CreateRecord
 {
-    protected static string $resource = BookingResource::class;
+    protected static string $resource = TrainingApplicationResource::class;
 
     public function getTitle(): string
     {
-        return 'Забронировать столик';
+        return 'Новая заявка на обучение';
     }
 
     protected function handleRecordCreation(array $data): Model
@@ -2297,13 +1755,13 @@ class CreateBooking extends CreateRecord
     protected function getCreateFormAction(): \Filament\Actions\Action
     {
         return parent::getCreateFormAction()
-            ->label('Забронировать');
+            ->label('Отправить заявку');
     }
 
     protected function getFormActions(): array
     {
         return [
-            $this->getCreateFormAction()->label('Забронировать'),
+            $this->getCreateFormAction()->label('Отправить заявку'),
         ];
     }
 
@@ -2314,30 +1772,30 @@ class CreateBooking extends CreateRecord
 
     protected function getCreatedNotificationTitle(): string
     {
-        return 'Столик успешно забронирован!';
+        return 'Заявка успешно отправлена!';
     }
 }
 PHP;
     }
 
-    private function getEditBookingPage(): string
+    private function getEditTrainingApplicationPage(): string
     {
         return <<<'PHP'
 <?php
 
-namespace App\Filament\Resources\BookingResource\Pages;
+namespace App\Filament\Resources\TrainingApplicationResource\Pages;
 
-use App\Filament\Resources\BookingResource;
+use App\Filament\Resources\TrainingApplicationResource;
 use Filament\Actions;
 use Filament\Resources\Pages\EditRecord;
 
-class EditBooking extends EditRecord
+class EditTrainingApplication extends EditRecord
 {
-    protected static string $resource = BookingResource::class;
+    protected static string $resource = TrainingApplicationResource::class;
 
     public function getTitle(): string
     {
-        return 'Редактирование бронирования';
+        return 'Редактирование заявки';
     }
 
     protected function getHeaderActions(): array
@@ -2345,7 +1803,7 @@ class EditBooking extends EditRecord
         return [
             Actions\DeleteAction::make()
                 ->label('Удалить')
-                ->visible(fn (): bool => !auth()->user()?->is_admin),
+                ->visible(fn (): bool => auth()->user()?->is_admin),
         ];
     }
 
@@ -2365,7 +1823,527 @@ class EditBooking extends EditRecord
 
     protected function getSavedNotificationTitle(): ?string
     {
-        return 'Бронирование обновлено!';
+        return 'Заявка обновлена!';
+    }
+
+    protected function getRedirectUrl(): string
+    {
+        return $this->getResource()::getUrl('index');
+    }
+}
+PHP;
+    }
+
+    // ─── Variant 4: BanquetBooking ─────────────────────────────────────
+
+    private function getBanquetBookingMigration(): string
+    {
+        return <<<'PHP'
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('banquet_bookings', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('user_id')->constrained()->cascadeOnDelete();
+            $table->enum('hall_type', ['hall', 'restaurant', 'summer_veranda', 'enclosed_veranda']);
+            $table->date('banquet_date');
+            $table->time('start_time');
+            $table->enum('payment_type', ['cash', 'card']);
+            $table->enum('status', ['new', 'assigned', 'completed'])->default('new');
+            $table->text('review_text')->nullable();
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('banquet_bookings');
+    }
+};
+PHP;
+    }
+
+    private function getBanquetBookingModel(): string
+    {
+        return <<<'PHP'
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+class BanquetBooking extends Model
+{
+    protected $fillable = [
+        'user_id',
+        'hall_type',
+        'banquet_date',
+        'start_time',
+        'payment_type',
+        'status',
+        'review_text',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'banquet_date' => 'date',
+            'start_time' => 'string',
+        ];
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+}
+PHP;
+    }
+
+    private function getBanquetBookingResource(): string
+    {
+        return <<<'PHP'
+<?php
+
+namespace App\Filament\Resources;
+
+use App\Filament\Resources\BanquetBookingResource\Pages;
+use App\Models\BanquetBooking;
+use Filament\Actions\Action;
+use Filament\Actions\BulkActionGroup;
+use Filament\Actions\DeleteBulkAction;
+use Filament\Actions\EditAction;
+use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Radio;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\TextInput;
+use Filament\Notifications\Notification;
+use Filament\Resources\Resource;
+use Filament\Schemas\Components\Section;
+use Filament\Schemas\Schema;
+use Filament\Tables;
+use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
+
+class BanquetBookingResource extends Resource
+{
+    protected static ?string $model = BanquetBooking::class;
+
+    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-building-office';
+
+    protected static ?string $navigationLabel = 'Заявки на бронирование';
+
+    protected static ?string $modelLabel = 'заявка';
+
+    protected static ?string $pluralModelLabel = 'заявки';
+
+    public static function form(Schema $schema): Schema
+    {
+        return $schema
+            ->components([
+                Section::make('Информация о заявителе')
+                    ->description('Данные пользователя, подавшего заявку')
+                    ->icon('heroicon-o-user')
+                    ->columns(2)
+                    ->schema([
+                        TextInput::make('user.fio')
+                            ->label('ФИО')
+                            ->disabled()
+                            ->visible(fn (string $operation): bool => $operation === 'edit'),
+                        TextInput::make('user.email')
+                            ->label('Электронная почта')
+                            ->disabled()
+                            ->visible(fn (string $operation): bool => $operation === 'edit'),
+                        TextInput::make('user.phone')
+                            ->label('Телефон')
+                            ->disabled()
+                            ->visible(fn (string $operation): bool => $operation === 'edit'),
+                    ]),
+
+                Section::make('Данные о банкете')
+                    ->description('Выберите зал, дату и время проведения')
+                    ->icon('heroicon-o-building-office')
+                    ->columns(2)
+                    ->schema([
+                        Select::make('hall_type')
+                            ->label('Тип помещения')
+                            ->options([
+                                'hall' => 'Зал',
+                                'restaurant' => 'Ресторан',
+                                'summer_veranda' => 'Летняя веранда',
+                                'enclosed_veranda' => 'Закрытая веранда',
+                            ])
+                            ->required(fn (string $operation): bool => $operation === 'create')
+                            ->disabled(fn (string $operation): bool => $operation === 'edit')
+                            ->validationMessages([
+                                'required' => 'Выберите тип помещения.',
+                            ]),
+
+                        DatePicker::make('banquet_date')
+                            ->label('Дата банкета')
+                            ->required(fn (string $operation): bool => $operation === 'create')
+                            ->disabled(fn (string $operation): bool => $operation === 'edit')
+                            ->validationMessages([
+                                'required' => 'Выберите дату конференции.',
+                            ]),
+
+                        Select::make('start_time')
+                            ->label('Время начала')
+                            ->options([
+                                '09:00' => '09:00',
+                                '10:00' => '10:00',
+                                '11:00' => '11:00',
+                                '12:00' => '12:00',
+                                '13:00' => '13:00',
+                                '14:00' => '14:00',
+                                '15:00' => '15:00',
+                                '16:00' => '16:00',
+                                '17:00' => '17:00',
+                                '18:00' => '18:00',
+                            ])
+                            ->required(fn (string $operation): bool => $operation === 'create')
+                            ->disabled(fn (string $operation): bool => $operation === 'edit')
+                            ->validationMessages([
+                                'required' => 'Выберите время начала.',
+                            ]),
+
+                        Select::make('payment_type')
+                            ->label('Способ оплаты')
+                            ->options([
+                                'cash' => 'Наличные',
+                                'card' => 'Банковская карта',
+                            ])
+                            ->required(fn (string $operation): bool => $operation === 'create')
+                            ->disabled(fn (string $operation): bool => $operation === 'edit')
+                            ->validationMessages([
+                                'required' => 'Выберите способ оплаты.',
+                            ]),
+                    ]),
+
+                Section::make('Управление статусом')
+                    ->description('Изменение статуса обработки заявки')
+                    ->icon('heroicon-o-arrow-path')
+                    ->schema([
+                        Select::make('status')
+                            ->label('Статус заявки')
+                            ->options([
+                                'new' => 'Новая',
+                                'assigned' => 'Мероприятие назначено',
+                                'completed' => 'Мероприятие завершено',
+                            ])
+                            ->required()
+                            ->live()
+                            ->visible(fn (string $operation): bool => $operation === 'edit' && auth()->user()?->is_admin),
+                    ]),
+
+                Section::make('Отзыв клиента')
+                    ->description('Отзыв, оставленный после завершения мероприятия')
+                    ->icon('heroicon-o-chat-bubble-left-ellipsis')
+                    ->schema([
+                        Textarea::make('review_text')
+                            ->label('Отзыв')
+                            ->disabled()
+                            ->visible(fn (string $operation): bool => $operation === 'edit' && auth()->user()?->is_admin),
+                    ]),
+
+                Section::make('Информация о заявке')
+                    ->description('Служебная информация')
+                    ->icon('heroicon-o-document-text')
+                    ->columns(2)
+                    ->schema([
+                        TextInput::make('created_at')
+                            ->label('Дата создания')
+                            ->disabled()
+                            ->visible(fn (string $operation): bool => $operation === 'edit'),
+                        TextInput::make('updated_at')
+                            ->label('Дата обновления')
+                            ->disabled()
+                            ->visible(fn (string $operation): bool => $operation === 'edit'),
+                    ]),
+            ]);
+    }
+
+    public static function table(Table $table): Table
+    {
+        return $table
+            ->columns([
+                Tables\Columns\TextColumn::make('id')
+                    ->label('ID')
+                    ->sortable(),
+                Tables\Columns\TextColumn::make('user.fio')
+                    ->label('ФИО')
+                    ->searchable(),
+                Tables\Columns\TextColumn::make('user.email')
+                    ->label('Email')
+                    ->searchable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                Tables\Columns\TextColumn::make('user.phone')
+                    ->label('Телефон')
+                    ->toggleable(isToggledHiddenByDefault: true),
+                Tables\Columns\TextColumn::make('hall_type')
+                    ->label('Помещение')
+                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                        'hall' => 'Зал',
+                        'restaurant' => 'Ресторан',
+                        'summer_veranda' => 'Летняя веранда',
+                        'enclosed_veranda' => 'Закрытая веранда',
+                        default => $state,
+                    })
+                    ->badge()
+                    ->color(fn (string $state): string => match ($state) {
+                        'hall' => 'info',
+                        'restaurant' => 'success',
+                        'summer_veranda' => 'warning',
+                        'enclosed_veranda' => 'danger',
+                        default => 'gray',
+                    }),
+                Tables\Columns\TextColumn::make('banquet_date')
+                    ->label('Дата')
+                    ->date()
+                    ->sortable(),
+                Tables\Columns\TextColumn::make('start_time')
+                    ->label('Время'),
+                Tables\Columns\TextColumn::make('payment_type')
+                    ->label('Оплата')
+                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                        'cash' => 'Наличные',
+                        'card' => 'Банковская карта',
+                        default => $state,
+                    }),
+                Tables\Columns\TextColumn::make('status')
+                    ->label('Статус')
+                    ->badge()
+                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                        'new' => 'Новая',
+                        'assigned' => 'Банкет назначен',
+                        'completed' => 'Банкет завершен',
+                        default => $state,
+                    })
+                    ->color(fn (string $state): string => match ($state) {
+                        'new' => 'info',
+                        'assigned' => 'success',
+                        'completed' => 'primary',
+                        default => 'gray',
+                    }),
+                Tables\Columns\TextColumn::make('created_at')
+                    ->label('Создана')
+                    ->dateTime()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+            ])
+            ->filters([
+                Tables\Filters\SelectFilter::make('status')
+                    ->label('Статус')
+                    ->options([
+                        'new' => 'Новая',
+                        'assigned' => 'Банкет назначен',
+                        'completed' => 'Банкет завершен',
+                    ]),
+                Tables\Filters\SelectFilter::make('hall_type')
+                    ->label('Помещение')
+                    ->options([
+                        'hall' => 'Зал',
+                        'restaurant' => 'Ресторан',
+                        'summer_veranda' => 'Летняя веранда',
+                        'enclosed_veranda' => 'Закрытая веранда',
+                    ]),
+            ])
+            ->actions([
+                Action::make('review')
+                    ->label('Оставить отзыв')
+                    ->icon('heroicon-o-chat-bubble-left-ellipsis')
+                    ->visible(fn ($record) => $record->status === 'completed' && !auth()->user()?->is_admin && !$record->review_text)
+                    ->form([
+                        Textarea::make('review_text')
+                            ->label('Ваш отзыв')
+                            ->required()
+                            ->maxLength(2000),
+                    ])
+                    ->action(function (array $data, $record): void {
+                        $record->update([
+                            'review_text' => $data['review_text'],
+                        ]);
+                        Notification::make()
+                            ->success()
+                            ->title('Отзыв сохранен!')
+                            ->send();
+                    }),
+                EditAction::make()
+                    ->label('Редактировать')
+                    ->visible(fn ($record) => auth()->user()?->is_admin),
+            ])
+            ->bulkActions([
+                BulkActionGroup::make([
+                    DeleteBulkAction::make(),
+                ]),
+            ])
+            ->defaultSort('created_at', 'desc')
+            ->poll('60s');
+    }
+
+    public static function getEloquentQuery(): Builder
+    {
+        $query = parent::getEloquentQuery();
+
+        if (!auth()->user()?->is_admin) {
+            $query->where('user_id', auth()->id());
+        }
+
+        return $query;
+    }
+
+    public static function getPages(): array
+    {
+        return [
+            'index' => Pages\ListBanquetBookings::route('/'),
+            'create' => Pages\CreateBanquetBooking::route('/create'),
+            'edit' => Pages\EditBanquetBooking::route('/{record}/edit'),
+        ];
+    }
+}
+PHP;
+    }
+
+    private function getListBanquetBookingsPage(): string
+    {
+        return <<<'PHP'
+<?php
+
+namespace App\Filament\Resources\BanquetBookingResource\Pages;
+
+use App\Filament\Resources\BanquetBookingResource;
+use Filament\Actions;
+use Filament\Resources\Pages\ListRecords;
+
+class ListBanquetBookings extends ListRecords
+{
+    protected static string $resource = BanquetBookingResource::class;
+
+    public function getTitle(): string
+    {
+        return auth()->user()?->is_admin ? 'Управление заявками' : 'Мои заявки';
+    }
+
+    protected function getHeaderActions(): array
+    {
+        return [
+            Actions\CreateAction::make()
+                ->label('Новая заявка'),
+        ];
+    }
+}
+PHP;
+    }
+
+    private function getCreateBanquetBookingPage(): string
+    {
+        return <<<'PHP'
+<?php
+
+namespace App\Filament\Resources\BanquetBookingResource\Pages;
+
+use App\Filament\Resources\BanquetBookingResource;
+use Filament\Resources\Pages\CreateRecord;
+use Illuminate\Database\Eloquent\Model;
+
+class CreateBanquetBooking extends CreateRecord
+{
+    protected static string $resource = BanquetBookingResource::class;
+
+    public function getTitle(): string
+    {
+        return 'Новая заявка на бронирование';
+    }
+
+    protected function handleRecordCreation(array $data): Model
+    {
+        $data['user_id'] = auth()->id();
+        $data['status'] = 'new';
+
+        return static::getModel()::create($data);
+    }
+
+    protected function getCreateFormAction(): \Filament\Actions\Action
+    {
+        return parent::getCreateFormAction()
+            ->label('Отправить заявку');
+    }
+
+    protected function getFormActions(): array
+    {
+        return [
+            $this->getCreateFormAction()->label('Отправить заявку'),
+        ];
+    }
+
+    protected function getRedirectUrl(): string
+    {
+        return $this->getResource()::getUrl('index');
+    }
+
+    protected function getCreatedNotificationTitle(): string
+    {
+        return 'Заявка успешно отправлена!';
+    }
+}
+PHP;
+    }
+
+    private function getEditBanquetBookingPage(): string
+    {
+        return <<<'PHP'
+<?php
+
+namespace App\Filament\Resources\BanquetBookingResource\Pages;
+
+use App\Filament\Resources\BanquetBookingResource;
+use Filament\Actions;
+use Filament\Resources\Pages\EditRecord;
+
+class EditBanquetBooking extends EditRecord
+{
+    protected static string $resource = BanquetBookingResource::class;
+
+    public function getTitle(): string
+    {
+        return 'Редактирование заявки';
+    }
+
+    protected function getHeaderActions(): array
+    {
+        return [
+            Actions\DeleteAction::make()
+                ->label('Удалить')
+                ->visible(fn (): bool => auth()->user()?->is_admin),
+        ];
+    }
+
+    protected function getFormActions(): array
+    {
+        if (!auth()->user()?->is_admin) {
+            return [];
+        }
+
+        return [
+            $this->getSaveFormAction()
+                ->label('Сохранить изменения'),
+            $this->getCancelFormAction()
+                ->label('Отмена'),
+        ];
+    }
+
+    protected function getSavedNotificationTitle(): ?string
+    {
+        return 'Заявка обновлена!';
     }
 
     protected function getRedirectUrl(): string
@@ -2378,9 +2356,12 @@ PHP;
 
     // ─── Seeders ───────────────────────────────────────────────────────
 
-    private function getAdminSeederV1(): string
+    private function getAdminSeeder(string $variant, string $email): string
     {
-        return <<<'PHP'
+        $email = preg_replace('/[^a-z@.]/', '', $email);
+        $birthDateField = $variant === '3' ? "'birth_date' => '1990-01-01',\n" : '';
+
+        return <<<PHP
 <?php
 
 namespace Database\Seeders;
@@ -2393,66 +2374,11 @@ class AdminSeeder extends Seeder
     public function run(): void
     {
         User::create([
-            'login' => 'avto2024',
-            'password' => bcrypt('poehali'),
+            'login' => 'Admin26',
+            'password' => bcrypt('Demo20'),
             'fio' => 'Администратор Системы',
-            'phone' => '+7(999)-999-99-99',
-            'email' => 'admin@auto.ru',
-            'is_admin' => true,
-        ]);
-    }
-}
-PHP;
-    }
-
-    private function getAdminSeederV2(): string
-    {
-        return <<<'PHP'
-<?php
-
-namespace Database\Seeders;
-
-use App\Models\User;
-use Illuminate\Database\Seeder;
-
-class AdminSeeder extends Seeder
-{
-    public function run(): void
-    {
-        User::create([
-            'login' => 'admin',
-            'password' => bcrypt('bookworm'),
-            'fio' => 'Администратор Системы',
-            'phone' => '+7(999)-999-99-99',
-            'email' => 'admin@book.ru',
-            'is_admin' => true,
-        ]);
-    }
-}
-PHP;
-    }
-
-    private function getAdminSeederV3(): string
-    {
-        return <<<'PHP'
-<?php
-
-namespace Database\Seeders;
-
-use App\Models\User;
-use Illuminate\Database\Seeder;
-
-class AdminSeeder extends Seeder
-{
-    public function run(): void
-    {
-        User::create([
-            'login' => 'admin',
-            'password' => bcrypt('restaurant'),
-            'first_name' => 'Администратор',
-            'last_name' => 'Системы',
-            'phone' => '+7(999)-999-99-99',
-            'email' => 'admin@rest.ru',
+            {$birthDateField}            'phone' => '+7(999)-999-99-99',
+            'email' => '{$email}',
             'is_admin' => true,
         ]);
     }

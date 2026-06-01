@@ -5,26 +5,23 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class Booking extends Model
+class BanquetBooking extends Model
 {
     protected $fillable = [
         'user_id',
-        'booking_date',
-        'booking_time',
-        'guests_count',
-        'contact_phone',
+        'hall_type',
+        'banquet_date',
+        'start_time',
+        'payment_type',
         'status',
         'review_text',
-        'review_rating',
     ];
 
     protected function casts(): array
     {
         return [
-            'booking_date' => 'date',
-            'booking_time' => 'string',
-            'guests_count' => 'integer',
-            'review_rating' => 'integer',
+            'banquet_date' => 'date',
+            'start_time' => 'string',
         ];
     }
 

@@ -40,7 +40,6 @@ class CleanupExamCommand extends Command
         $paths = [
             app_path('Filament/Pages/Auth'),
             app_path('Filament/Resources'),
-            app_path('Filament'),
         ];
 
         foreach ($paths as $path) {
